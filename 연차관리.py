@@ -19,8 +19,9 @@ SPREADSHEET_NAME = "vacation_data"
 # --- [사내 아웃룩 연동] 메일 발송 설정 ---
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-SENDER_EMAIL = "haacact@gmail.com"
-SENDER_PASSWORD = "gjurrycgnypvyilk"
+# 🚨 앞서 식수시스템과 동일하게 새 이메일 계정 및 앱 비밀번호로 변경하세요
+SENDER_EMAIL = "haacact@gmail.com"          
+SENDER_PASSWORD = "여기에_16자리_앱비밀번호_입력"
 
 @st.cache_resource
 def get_gspread_client():
@@ -194,30 +195,50 @@ def calculate_vacation_accrual(join_date_str, target_year):
     except:
         return 15.0 
 
+# 🚀 [자동화 로직] 3일 지난 연차계획을 찾아 자동으로 실제 연차로 확정시키는 함수
+def auto_convert_expired_plans(df_emp, df_plans, year):
+    today_date = datetime.now().date()
+    needs_save = False
+    
+    for idx, row in df_plans.iterrows():
+        if row['Type'] == '연차계획' and row['Status'] == '승인':
+            try:
+                plan_date = datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date()
+                # 예정일로부터 3일 이상(>=3) 지났으면 자동으로 연차 전환
+                if (today_date - plan_date).days >= 3:
+                    df_plans.at[idx, 'Type'] = '연차'
+                    target_emp_id = str(row['Emp_ID'])
+                    
+                    # 실제 사용처리: 사용량 +1, 연차잔액 -1, 연차계획 카운트 -1
+                    df_emp.loc[df_emp["ID"].astype(str) == target_emp_id, "사용"] += 1.0
+                    df_emp.loc[df_emp["ID"].astype(str) == target_emp_id, "연차잔액"] -= 1.0
+                    df_emp.loc[df_emp["ID"].astype(str) == target_emp_id, "연차계획"] -= 1.0
+                    needs_save = True
+            except:
+                pass
+                
+    if needs_save:
+        save_emp_and_plans(df_emp, df_plans, year)
+    return df_emp, df_plans
+
 st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
-# 🚀 [UI 보완] 멀티페이지 네비게이션 바로 아래에 동일한 룩앤필로 경비 시스템 링크 삽입
 st.sidebar.page_link("https://hiairac-expense-sysem.onrender.com/", label="경비 시스템 가기", icon="💸")
 st.sidebar.divider()
 
 available_years = get_available_years()
 
-# --- [에러 해결] 각각의 변수가 없으면 무조건 독립적으로 만들어주도록 분리 ---
+# 🚀 [오류 방지] 각각의 세션 변수를 독립적으로 생성하여 식수시스템 횡단 에러 원천 차단
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
-    
 if 'user_info' not in st.session_state:
     st.session_state['user_info'] = None
-    
 if 'selected_year' not in st.session_state:
     now_y = datetime.now().year
     default_y = now_y if now_y in available_years else available_years[-1]
     st.session_state['selected_year'] = default_y
-# -----------------------------------------------------------------
 
 if not st.session_state['logged_in']:
-
-    
     st.title("🔐 사내 연차 관리 시스템")
     with st.form("login"):
         s_year = st.selectbox("📅 접속 연도 선택", available_years, index=available_years.index(st.session_state['selected_year']) if st.session_state['selected_year'] in available_years else len(available_years)-1)
@@ -237,6 +258,10 @@ if not st.session_state['logged_in']:
 
 sel_year = st.session_state['selected_year']
 df_emp, df_plans = load_data(sel_year)
+
+# 🚀 [기동] 데이터 로드 직후 만료된(3일경과) 연차계획 자동 변환 트리거 실행
+df_emp, df_plans = auto_convert_expired_plans(df_emp, df_plans, sel_year)
+
 user_info = df_emp[df_emp['ID'] == st.session_state['user_info']['ID']].iloc[0]
 
 sub_title_str = f"{user_info['팀']}"
@@ -387,15 +412,31 @@ elif choice == "🏠 내 연차 신청/현황":
             cols[1].write(f"상태: {row['Status']}")
             
             with cols[2]:
-                if row['Status'] in ['대기', '검토완료']:
+                # 🚀 [업데이트] 취소 가능한 조건 판단
+                can_cancel = False
+                if row['Status'] in ['대기', '검토완료']: 
+                    can_cancel = True
+                # 연차계획은 팀장 승인 여부 상관없이 취소 가능하도록 권한 개방!
+                elif row['Type'] == '연차계획' and row['Status'] == '승인': 
+                    can_cancel = True
+                    
+                if can_cancel:
                     if st.button("❌ 취소", key=f"cancel_{row['ID']}"):
-                        df_plans = df_plans[df_plans['ID'].astype(str) != str(row['ID'])]
-                        if save_plans_only(df_plans, sel_year):
-                            st.session_state['cancel_success'] = True
-                            st.rerun()
-                            
+                        # 만약 이미 승인된 연차계획을 취소한다면, 올라갔던 연차계획 카운트를 다시 빼줌
+                        if row['Type'] == '연차계획' and row['Status'] == '승인':
+                            df_emp.loc[df_emp["ID"] == user_info['ID'], "연차계획"] -= 1.0
+                            df_plans = df_plans[df_plans['ID'].astype(str) != str(row['ID'])]
+                            if save_emp_and_plans(df_emp, df_plans, sel_year):
+                                st.session_state['cancel_success'] = True
+                                st.rerun()
+                        else: # 일반 대기상태 취소
+                            df_plans = df_plans[df_plans['ID'].astype(str) != str(row['ID'])]
+                            if save_plans_only(df_plans, sel_year):
+                                st.session_state['cancel_success'] = True
+                                st.rerun()
+                                
                 if row['Type'] == "연차계획":
-                    if st.button("연차로 변경", key=f"btn_{row['ID']}"):
+                    if st.button("✅ 연차로 확정(변경)", key=f"btn_{row['ID']}"):
                         df_plans.at[idx, "Type"] = "연차"
                         if row['Status'] == "승인":
                             df_emp.loc[df_emp["ID"] == user_info['ID'], ["사용","연차잔액","연차계획"]] += [1.0, -1.0, -1.0]
@@ -708,7 +749,7 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
     st.download_button("📥 현재 구글시트 최신 데이터를 엑셀 백업본으로 다운로드", data=buffer, file_name=f"vacation_data_backup_{sel_year}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     st.divider()
 
-    tab_list, tab_stat, tab_notice, tab_mail, tab_emp, tab_rollover = st.tabs(["📋 전사 로그 관리", "📈 월간 사용 통계", "📝 연차촉진 공지사항", "📧 내일 연차자 메일 발송", "👥 임직원 정보", "🗓️ 차기 연도 DB 생성(Rollover)"])
+    tab_list, tab_stat, tab_notice, tab_emp, tab_rollover = st.tabs(["📋 전사 로그 관리", "📈 월간 사용 통계", "📝 연차촉진 공지사항", "👥 임직원 정보", "🗓️ 차기 연도 DB 생성(Rollover)"])
     
     with tab_list:
         valid_plans = df_plans[df_plans['Emp_ID'] != ""]
@@ -798,22 +839,6 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                         if save_notices_only(df_notices[df_notices["제목"] != edit_target]):
                             st.warning("삭제 완료!")
                             st.rerun()
-
-    with tab_mail:
-        st.subheader("📧 아웃룩 메일 서버 연동 향후 7일간 연차자 확인")
-        date_range = [(datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, 8)]
-        tm_vacations = df_plans[(df_plans['Date'].isin(date_range)) & (df_plans['Status'] == '승인')]
-        if tm_vacations.empty:
-            st.warning("향후 7일간 승인된 연차/휴가 대상자가 없습니다.")
-        else:
-            mail_targets = tm_vacations.merge(df_emp[['ID', '이름', 'EMAIL']], left_on='Emp_ID', right_on='ID').sort_values(by='Date')
-            st.dataframe(mail_targets[['Date', '이름', 'Type', 'EMAIL']], hide_index=True, use_container_width=True)
-            if st.button("🚀 위 대상자 전원에게 안내 메일 즉시 일괄 발송"):
-                success_count = 0
-                for _, row in mail_targets.iterrows():
-                    if "@" in str(row['EMAIL']):
-                        if send_vacation_email(str(row['EMAIL']).strip(), row['이름'], row['Date']): success_count += 1
-                st.success(f"🎉 총 {success_count}명의 대상 직원에게 안내 메일을 발송했습니다!")
 
     with tab_emp:
         st.subheader("👥 임직원 정보 관리")
