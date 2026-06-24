@@ -8,6 +8,7 @@ import math
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.header import Header
 import io
 import json
 import gspread
@@ -19,7 +20,7 @@ SPREADSHEET_NAME = "vacation_data"
 # --- [사내 아웃룩 연동] 메일 발송 설정 ---
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-# 🚨 앞서 식수시스템과 동일하게 새 이메일 계정 및 앱 비밀번호로 변경하세요
+# 🚨 사내 메일 주소 및 앱 비밀번호
 SENDER_EMAIL = "haacact@gmail.com"          
 SENDER_PASSWORD = "여기에_16자리_앱비밀번호_입력"
 
@@ -96,7 +97,8 @@ def load_data(year):
             df_plans = pd.DataFrame()
             
         if not df_plans.empty:
-            required_plan_cols = ['ID', 'Emp_ID', 'Date', 'Status', 'Type', 'Reason', 'Manager_Sign', 'Part_Sign', 'Apply_Time', 'Approve_Time']
+            # 🚀 [추가] Reminder_Sent 컬럼 추가 (리마인드 메일 중복 발송 방지용)
+            required_plan_cols = ['ID', 'Emp_ID', 'Date', 'Status', 'Type', 'Reason', 'Manager_Sign', 'Part_Sign', 'Apply_Time', 'Approve_Time', 'Reminder_Sent']
             for col in required_plan_cols:
                 if col not in df_plans.columns: df_plans[col] = "" 
             df_plans['Date'] = df_plans['Date'].astype(str)
@@ -106,6 +108,7 @@ def load_data(year):
             df_plans['Part_Sign'] = df_plans['Part_Sign'].fillna("").astype(str)
             df_plans['Apply_Time'] = df_plans['Apply_Time'].fillna("").astype(str)
             df_plans['Approve_Time'] = df_plans['Approve_Time'].fillna("").astype(str)
+            df_plans['Reminder_Sent'] = df_plans['Reminder_Sent'].fillna("").astype(str)
                 
         return df_emp, df_plans
     except Exception as e:
@@ -195,7 +198,41 @@ def calculate_vacation_accrual(join_date_str, target_year):
     except:
         return 15.0 
 
-# 🚀 [자동화 로직] 3일 지난 연차계획을 찾아 자동으로 실제 연차로 확정시키는 함수
+# 🚀 [추가] 휴가 7일 전 알림 이메일 발송 함수
+def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
+    if not to_email or "@" not in to_email:
+        return False
+        
+    subject = f"[리마인드] {emp_name}님, {date_str} [{v_type}] 일주일 전 안내입니다."
+    body = f"""안녕하세요. {emp_name}님,
+
+신청하신 [{v_type}] 일정이 약 일주일 앞으로 다가와 안내해 드립니다.
+
+■ 일 자 : {date_str}
+■ 구 분 : {v_type}
+
+휴가 전 업무 인수인계를 잘 마무리하시고, 즐겁고 편안한 시간 보내시길 바랍니다!
+(※ '연차계획'으로 신청하신 경우, 시스템에 접속하여 실제 '연차'로 확정 변경을 부탁드립니다.)
+
+- 하이에어공조(주) 시스템 관리자 드림 -
+"""
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = to_email
+        msg['Subject'] = Header(subject, 'utf-8').encode()
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+        
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        return False
+
+# 🚀 [자동화 스캐너 1] 3일 지난 연차계획 자동 전환
 def auto_convert_expired_plans(df_emp, df_plans, year):
     today_date = datetime.now().date()
     needs_save = False
@@ -204,12 +241,10 @@ def auto_convert_expired_plans(df_emp, df_plans, year):
         if row['Type'] == '연차계획' and row['Status'] == '승인':
             try:
                 plan_date = datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date()
-                # 예정일로부터 3일 이상(>=3) 지났으면 자동으로 연차 전환
                 if (today_date - plan_date).days >= 3:
                     df_plans.at[idx, 'Type'] = '연차'
                     target_emp_id = str(row['Emp_ID'])
                     
-                    # 실제 사용처리: 사용량 +1, 연차잔액 -1, 연차계획 카운트 -1
                     df_emp.loc[df_emp["ID"].astype(str) == target_emp_id, "사용"] += 1.0
                     df_emp.loc[df_emp["ID"].astype(str) == target_emp_id, "연차잔액"] -= 1.0
                     df_emp.loc[df_emp["ID"].astype(str) == target_emp_id, "연차계획"] -= 1.0
@@ -221,6 +256,41 @@ def auto_convert_expired_plans(df_emp, df_plans, year):
         save_emp_and_plans(df_emp, df_plans, year)
     return df_emp, df_plans
 
+# 🚀 [자동화 스캐너 2] D-7 이내 휴가 리마인드 이메일 발송
+def auto_send_reminders(df_emp, df_plans, year):
+    today_date = datetime.now().date()
+    needs_save = False
+    
+    for idx, row in df_plans.iterrows():
+        # 취소(반려)되지 않았고, 아직 리마인드 메일을 안 보낸 내역 탐색
+        if row['Status'] != '반려' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "":
+            try:
+                plan_date = datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date()
+                
+                # 휴가 시작일이 오늘 기준 1~7일 사이로 다가왔을 때 메일 발송
+                if 1 <= (plan_date - today_date).days <= 7:
+                    emp_id = str(row['Emp_ID'])
+                    emp_info = df_emp[df_emp['ID'].astype(str) == emp_id]
+                    
+                    if not emp_info.empty:
+                        emp_email = emp_info.iloc[0].get('EMAIL', '')
+                        emp_name = emp_info.iloc[0]['이름']
+                        
+                        if emp_email and "@" in str(emp_email):
+                            if send_vacation_reminder_email(emp_email, emp_name, row['Date'], row['Type']):
+                                df_plans.at[idx, 'Reminder_Sent'] = 'Y'
+                                needs_save = True
+                        else:
+                            # 이메일 주소가 없으면 에러가 무한 반복되지 않도록 'E'(Error) 처리
+                            df_plans.at[idx, 'Reminder_Sent'] = 'E'
+                            needs_save = True
+            except:
+                pass
+                
+    if needs_save:
+        save_plans_only(df_plans, year)
+    return df_plans
+
 st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
 st.sidebar.page_link("https://hiairac-expense-sysem.onrender.com/", label="경비 시스템 가기", icon="💸")
@@ -228,7 +298,6 @@ st.sidebar.divider()
 
 available_years = get_available_years()
 
-# 🚀 [오류 방지] 각각의 세션 변수를 독립적으로 생성하여 식수시스템 횡단 에러 원천 차단
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'user_info' not in st.session_state:
@@ -259,8 +328,9 @@ if not st.session_state['logged_in']:
 sel_year = st.session_state['selected_year']
 df_emp, df_plans = load_data(sel_year)
 
-# 🚀 [기동] 데이터 로드 직후 만료된(3일경과) 연차계획 자동 변환 트리거 실행
+# 🚀 [기동] 접속 시마다 자동화 스캐너(만료 변환 + 리마인드 메일 발송) 백그라운드 실행
 df_emp, df_plans = auto_convert_expired_plans(df_emp, df_plans, sel_year)
+df_plans = auto_send_reminders(df_emp, df_plans, sel_year)
 
 user_info = df_emp[df_emp['ID'] == st.session_state['user_info']['ID']].iloc[0]
 
@@ -393,7 +463,7 @@ elif choice == "🏠 내 연차 신청/현황":
                         "ID": new_id, "Emp_ID": user_info['ID'], "Date": d_str, 
                         "Status": "대기", "Type": st.session_state['temp_type'], 
                         "Reason": st.session_state['temp_reason'], "Manager_Sign": "", "Part_Sign": "",
-                        "Apply_Time": now_str, "Approve_Time": ""
+                        "Apply_Time": now_str, "Approve_Time": "", "Reminder_Sent": ""
                     })
                     new_id += 1
                 
@@ -412,24 +482,21 @@ elif choice == "🏠 내 연차 신청/현황":
             cols[1].write(f"상태: {row['Status']}")
             
             with cols[2]:
-                # 🚀 [업데이트] 취소 가능한 조건 판단
                 can_cancel = False
                 if row['Status'] in ['대기', '검토완료']: 
                     can_cancel = True
-                # 연차계획은 팀장 승인 여부 상관없이 취소 가능하도록 권한 개방!
                 elif row['Type'] == '연차계획' and row['Status'] == '승인': 
                     can_cancel = True
                     
                 if can_cancel:
                     if st.button("❌ 취소", key=f"cancel_{row['ID']}"):
-                        # 만약 이미 승인된 연차계획을 취소한다면, 올라갔던 연차계획 카운트를 다시 빼줌
                         if row['Type'] == '연차계획' and row['Status'] == '승인':
                             df_emp.loc[df_emp["ID"] == user_info['ID'], "연차계획"] -= 1.0
                             df_plans = df_plans[df_plans['ID'].astype(str) != str(row['ID'])]
                             if save_emp_and_plans(df_emp, df_plans, sel_year):
                                 st.session_state['cancel_success'] = True
                                 st.rerun()
-                        else: # 일반 대기상태 취소
+                        else:
                             df_plans = df_plans[df_plans['ID'].astype(str) != str(row['ID'])]
                             if save_plans_only(df_plans, sel_year):
                                 st.session_state['cancel_success'] = True
