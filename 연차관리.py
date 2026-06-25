@@ -201,7 +201,7 @@ def calculate_vacation_accrual(join_date_str, target_year):
 def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
     if not to_email or "@" not in to_email:
         return False
-    subject = f"[리마인드] {emp_name}님, {date_str} [{v_type}] 안내입니다."
+    subject = f"[연차시스템] {emp_name}님, {date_str} [{v_type}] 안내입니다."
     body = f"""안녕하세요. {emp_name}님,
 
 신청하신 [{v_type}] 일정 안내해 드립니다.
