@@ -201,15 +201,15 @@ def calculate_vacation_accrual(join_date_str, target_year):
 def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
     if not to_email or "@" not in to_email:
         return False
-    subject = f"[리마인드] {emp_name}님, {date_str} [{v_type}] 일주일 전 안내입니다."
+    subject = f"[리마인드] {emp_name}님, {date_str} [{v_type}] 안내입니다."
     body = f"""안녕하세요. {emp_name}님,
 
-신청하신 [{v_type}] 일정이 약 일주일 앞으로 다가와 안내해 드립니다.
+신청하신 [{v_type}] 일정 안내해 드립니다.
 
 ■ 일 자 : {date_str}
 ■ 구 분 : {v_type}
 
-휴가 전 업무 인수인계를 잘 마무리하시고, 즐겁고 편안한 시간 보내시길 바랍니다!
+휴가 전 업무 인수인계를 원활히 마무리해 주시기 바라며, 즐겁고 편안한 시간 보내시길 바랍니다!
 (※ '연차계획'으로 신청하신 경우, 시스템에 접속하여 실제 '연차'로 확정 변경을 부탁드립니다.)
 
 - 하이에어공조(주) 시스템 관리자 드림 -
