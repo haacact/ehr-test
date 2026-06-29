@@ -8,7 +8,7 @@ import math
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.header import Header  # 🚀 [추가] 메일 제목 한글 인코딩 방어용
+from email.header import Header  
 import io
 import json
 import gspread
@@ -96,7 +96,6 @@ def load_data(year):
             df_plans = pd.DataFrame()
             
         if not df_plans.empty:
-            # 🚀 [추가] 리마인드 메일 중복 발송 방지용 'Reminder_Sent' 컬럼 추가
             required_plan_cols = ['ID', 'Emp_ID', 'Date', 'Status', 'Type', 'Reason', 'Manager_Sign', 'Part_Sign', 'Apply_Time', 'Approve_Time', 'Reminder_Sent']
             for col in required_plan_cols:
                 if col not in df_plans.columns: df_plans[col] = "" 
@@ -197,30 +196,18 @@ def calculate_vacation_accrual(join_date_str, target_year):
     except:
         return 15.0 
 
-# 🚀 [추가] 휴가 7일 전 알림 이메일 발송 함수
+# 🚀 [기존] 7일 전 알림 메일 함수
 def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
     if not to_email or "@" not in to_email:
         return False
-    subject = f"[연차시스템] {emp_name}님, {date_str} [{v_type}] 안내입니다."
-    body = f"""안녕하세요. {emp_name}님,
-
-신청하신 [{v_type}] 일정 안내해 드립니다.
-
-■ 일 자 : {date_str}
-■ 구 분 : {v_type}
-
-휴가 전 업무 인수인계를 원활히 마무리해 주시기 바라며, 즐겁고 편안한 시간 보내시길 바랍니다!
-(※ '연차계획'으로 신청하신 경우, 시스템에 접속하여 실제 '연차'로 확정 변경을 부탁드립니다.)
-
-- 하이에어공조(주) 시스템 관리자 드림 -
-"""
+    subject = f"[리마인드] {emp_name}님, {date_str} [{v_type}] 일주일 전 안내입니다."
+    body = f"안녕하세요. {emp_name}님,\n\n신청하신 [{v_type}] 일정이 약 일주일 앞으로 다가와 안내해 드립니다.\n\n■ 일 자 : {date_str}\n■ 구 분 : {v_type}\n\n휴가 전 업무 인수인계를 잘 마무리하시고, 즐겁고 편안한 시간 보내시길 바랍니다!\n(※ '연차계획'으로 신청하신 경우, 시스템에 접속하여 실제 '연차'로 확정 변경을 부탁드립니다.)\n\n- 하이에어공조(주) 시스템 관리자 드림 -"
     try:
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
         msg['To'] = to_email
-        msg['Subject'] = Header(subject, 'utf-8').encode()
+        msg['Subject'] = Header(subject, 'utf-8')
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
-        
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
@@ -230,7 +217,26 @@ def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
     except:
         return False
 
-# 🚀 [추가] 3일 지난 연차계획 자동 전환 함수
+# 🚀 [신규] 결재권자(팀장/파트장)에게 보내는 신청 알림 메일 함수
+def send_application_alert_email(to_emails, emp_name, date_str, v_type, v_reason):
+    if not to_emails: return False
+    subject = f"[결재요청] {emp_name}님 {v_type} 신청 건"
+    body = f"안녕하세요.\n\n{emp_name}님이 아래와 같이 [{v_type}]을(를) 신청했습니다.\n시스템에 접속하여 검토/승인 처리를 부탁드립니다.\n\n■ 신청자 : {emp_name}\n■ 일 자 : {date_str}\n■ 구 분 : {v_type}\n■ 사 유 : {v_reason}\n\n- 사내 연차 관리 시스템 드림 -"
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = ", ".join(to_emails)
+        msg['Subject'] = Header(subject, 'utf-8')
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, to_emails, msg.as_string())
+        server.quit()
+        return True
+    except:
+        return False
+
 def auto_convert_expired_plans(df_emp, df_plans, year):
     today_date = datetime.now().date()
     needs_save = False
@@ -250,12 +256,11 @@ def auto_convert_expired_plans(df_emp, df_plans, year):
         save_emp_and_plans(df_emp, df_plans, year)
     return df_emp, df_plans
 
-# 🚀 [추가] 수동(관리자) 리마인드 스캐너 및 발송기
 def execute_manual_reminders(df_emp, df_plans, year):
     today_date = datetime.now().date()
     success_count = 0
     for idx, row in df_plans.iterrows():
-        if row['Status'] != '반려' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "":
+        if row['Status'] == '승인' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "":
             try:
                 plan_date = datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date()
                 if 1 <= (plan_date - today_date).days <= 7:
@@ -277,13 +282,11 @@ def execute_manual_reminders(df_emp, df_plans, year):
 
 st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
-# 🚀 [UI 보완] 멀티페이지 네비게이션 바로 아래에 동일한 룩앤필로 경비 시스템 링크 삽입
 st.sidebar.page_link("https://hiairac-expense-sysem.onrender.com/", label="경비 시스템 가기", icon="💸")
 st.sidebar.divider()
 
 available_years = get_available_years()
 
-# --- [에러 해결] 각각의 변수가 없으면 무조건 독립적으로 만들어주도록 분리 ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
     
@@ -294,7 +297,6 @@ if 'selected_year' not in st.session_state:
     now_y = datetime.now().year
     default_y = now_y if now_y in available_years else available_years[-1]
     st.session_state['selected_year'] = default_y
-# -----------------------------------------------------------------
 
 if not st.session_state['logged_in']:
     st.title("🔐 사내 연차 관리 시스템")
@@ -317,7 +319,6 @@ if not st.session_state['logged_in']:
 sel_year = st.session_state['selected_year']
 df_emp, df_plans = load_data(sel_year)
 
-# 🚀 [자동화 추가] 기동 시 연차계획 만료건 3일 스캐너 자동 실행
 df_emp, df_plans = auto_convert_expired_plans(df_emp, df_plans, sel_year)
 
 user_info = df_emp[df_emp['ID'] == st.session_state['user_info']['ID']].iloc[0]
@@ -438,6 +439,7 @@ elif choice == "🏠 내 연차 신청/현황":
             dates_str = f"{temp_dates[0]} ~ {temp_dates[-1]} (평일 {len(temp_dates)}일)" if len(temp_dates) > 1 else f"{temp_dates[0]}"
                 
             st.warning(f"⚠️ {dates_str} [{st.session_state['temp_type']}] 신청하시겠습니까?")
+            
             if st.button("✅ 최종 확인"):
                 try:
                     new_id = int(pd.to_numeric(df_plans["ID"], errors='coerce').max() + 1)
@@ -456,7 +458,28 @@ elif choice == "🏠 내 연차 신청/현황":
                     new_id += 1
                 
                 df_plans = pd.concat([df_plans, pd.DataFrame(new_rows)], ignore_index=True)
+                
                 if save_plans_only(df_plans, sel_year):
+                    # 🚀 [추가] 결재권자 탐색 및 알림 메일 발송 로직
+                    approvers = pd.DataFrame()
+                    if user_info['permission'] == '팀원' and str(user_info['파트']).strip() != "":
+                        # 파트 소속 팀원의 경우 1차 결재자인 '파트장'을 먼저 찾음
+                        approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['파트'] == user_info['파트']) & (df_emp['permission'] == '파트장')]
+                        if approvers.empty: # 파트장이 공석인 경우 팀장에게 발송
+                            approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'] == '팀장')]
+                    elif user_info['permission'] in ['팀원', '파트장']:
+                        # 파트장이나, 파트가 없는 팀원의 경우 결재자는 '팀장'
+                        approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'] == '팀장')]
+                    elif user_info['permission'] == '팀장':
+                        # 팀장의 결재자는 '총괄'
+                        approvers = df_emp[df_emp['permission'] == '총괄']
+                        
+                    if not approvers.empty:
+                        to_emails = [str(e).strip() for e in approvers['EMAIL'] if pd.notna(e) and "@" in str(e)]
+                        if to_emails:
+                            # 💡 백그라운드 발송 처리 (에러가 나더라도 신청 로직에 영향이 없도록)
+                            send_application_alert_email(to_emails, user_info['이름'], dates_str, st.session_state['temp_type'], st.session_state['temp_reason'])
+
                     st.session_state['apply_success'] = True
                     del st.session_state['confirm_apply']
                     st.rerun()
@@ -470,7 +493,6 @@ elif choice == "🏠 내 연차 신청/현황":
             cols[1].write(f"상태: {row['Status']}")
             
             with cols[2]:
-                # 🚀 [변경] 승인된 연차계획 취소 가능 권한 열기
                 can_cancel = False
                 if row['Status'] in ['대기', '검토완료']:
                     can_cancel = True
@@ -480,7 +502,6 @@ elif choice == "🏠 내 연차 신청/현황":
                 if can_cancel:
                     if st.button("❌ 취소", key=f"cancel_{row['ID']}"):
                         if row['Type'] == '연차계획' and row['Status'] == '승인':
-                            # 승인된 계획 환불 처리
                             df_emp.loc[df_emp["ID"] == user_info['ID'], "연차계획"] -= 1.0
                             df_plans = df_plans[df_plans['ID'].astype(str) != str(row['ID'])]
                             if save_emp_and_plans(df_emp, df_plans, sel_year):
@@ -897,15 +918,14 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                             st.warning("삭제 완료!")
                             st.rerun()
 
-    # 🚀 [업데이트] 수동 리마인드 메일 발송 제어판
     with tab_mail:
         st.subheader("📧 다가오는 휴가 일정 리마인드 발송 제어판 (D-7)")
-        st.info("💡 아래 명단은 향후 1~7일 이내에 연차/휴가 일정이 다가왔으나, 아직 알림을 받지 않은 임직원들입니다.")
+        st.info("💡 아래 명단은 향후 1~7일 이내에 연차/휴가 일정이 다가왔으나, 아직 알림을 받지 않은 [승인 완료된] 임직원들입니다.")
         
         today_date = datetime.now().date()
         preview_rows = []
         for idx, row in df_plans.iterrows():
-            if row['Status'] != '반려' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "":
+            if row['Status'] == '승인' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "":
                 try:
                     plan_date = datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date()
                     if 1 <= (plan_date - today_date).days <= 7:
