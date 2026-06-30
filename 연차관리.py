@@ -798,7 +798,7 @@ elif choice == "📅 연차 현황 달력":
     # 🚀 [추가] 달력 상에 공휴일을 뿌려주기 위해 공휴일 데이터 로드
     df_holidays = load_holidays()
     
-   t = datetime.now()
+t = datetime.now()
     y_col, m_col = st.columns(2)
     s_y = y_col.selectbox("연도", [t.year, t.year+1, t.year-1], index=0)
     s_m = m_col.selectbox("월", range(1, 13), index=t.month-1)
