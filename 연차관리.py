@@ -14,6 +14,9 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+# --- [페이지 기본 설정] --- (가장 상단에 위치해야 안전합니다)
+st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
+
 # --- [구글 시트 연동 설정] ---
 SPREADSHEET_NAME = "vacation_data"     
 
@@ -21,7 +24,8 @@ SPREADSHEET_NAME = "vacation_data"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "haacact@gmail.com"
-SENDER_PASSWORD = "gjurrycgnypvyilk"
+# st.secrets에 등록을 권장하지만, 즉시 실행되도록 get()의 기본값으로 기존 비밀번호를 유지했습니다.
+SENDER_PASSWORD = st.secrets.get("email_password", "gjurrycgnypvyilk")
 
 @st.cache_resource
 def get_gspread_client():
@@ -208,7 +212,7 @@ def save_emp_only(df_emp, year):
 def calculate_vacation_accrual(join_date_str, target_year):
     try:
         j_dt = datetime.strptime(str(join_date_str).strip(), "%Y-%m-%d")
-        total_months = (target_year - j_dt.year) * 12 + (1 - j_dt.month)  # 뒤에 붙은 걸 지우고 여기서 줄바꿈!
+        total_months = (target_year - j_dt.year) * 12 + (1 - j_dt.month)
         if 1 < j_dt.day: total_months -= 1
         if total_months < 0: return 0.0 
         full_years = total_months // 12
@@ -303,7 +307,6 @@ def execute_manual_reminders(df_emp, df_plans, year):
         save_plans_only(df_plans, year)
     return success_count
 
-st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
 st.sidebar.page_link("https://hiairac-expense-sysem.onrender.com/", label="경비 시스템 가기", icon="💸")
 st.sidebar.divider()
@@ -433,9 +436,9 @@ elif choice == "🏠 내 연차 신청/현황":
                 else: start_date = end_date = None
             else: start_date = end_date = v_date
                 
-        if start_date and end_date:
-           df_holidays = load_holidays()
-           holiday_list = df_holidays['Date'].tolist() if not df_holidays.empty else []
+            if start_date and end_date:
+                df_holidays = load_holidays()
+                holiday_list = df_holidays['Date'].tolist() if not df_holidays.empty else []
                 
                 date_list = []
                 delta = end_date - start_date
