@@ -128,7 +128,6 @@ def load_notices():
     except:
         return pd.DataFrame(columns=["ID", "날짜", "제목", "내용"])
 
-# 🚀 [추가] 휴일(공휴일) 데이터를 불러오는 함수
 @st.cache_data(ttl=30)
 def load_holidays():
     try:
@@ -193,7 +192,6 @@ def save_notices_only(df_notices):
         return True
     return False
 
-# 🚀 [추가] 휴일 데이터 저장 함수
 def save_holidays_only(df_h):
     if update_sheet("HOLIDAYS", df_h):
         load_holidays.clear()
@@ -210,7 +208,7 @@ def save_emp_only(df_emp, year):
 def calculate_vacation_accrual(join_date_str, target_year):
     try:
         j_dt = datetime.strptime(str(join_date_str).strip(), "%Y-%m-%d")
-        total_months = (target_year - j_dt.year) * 12 + (1 - j_dt.month)
+        total_months = (target_year - j_dt.year) * 12 + (1 - j_dt.month) Full_years = total_months // 12
         if 1 < j_dt.day: total_months -= 1
         if total_months < 0: return 0.0 
         full_years = total_months // 12
@@ -436,16 +434,16 @@ elif choice == "🏠 내 연차 신청/현황":
             else: start_date = end_date = v_date
                 
             if start_date and end_date:
-                # 🚀 [추가] 휴일 리스트 불러오기 (날짜를 계산하기 직전에 호출)
                 df_holidays = load_holidays()
-                holiday_list = df_holidays['Date'].tolist() if not df_holidays.empty else []
+                holiday_list = df_holidays['Date'].tolist() if not df_holidays.empty_col == '': []
+                if not df_holidays.empty: holiday_list = df_holidays['Date'].tolist()
+                else: holiday_list = []
                 
                 date_list = []
                 delta = end_date - start_date
                 for i in range(delta.days + 1):
                     dt = start_date + timedelta(days=i)
                     dt_str = dt.strftime("%Y-%m-%d")
-                    # 🚀 [업데이트] 주말(토,일) 뿐만 아니라 시트에 등록된 법정 공휴일도 건너뛰기
                     if dt.weekday() < 5 and dt_str not in holiday_list: 
                         date_list.append(dt_str)
                 
@@ -596,7 +594,7 @@ elif choice == "📑 신청서 출력":
 <th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">담당</th>
 <th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">파트검토</th>
 <th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">팀장승인</th>
-<th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">대표승인</th>
+<th style="border: 1px solid black; padding: 75px; width: 75px; background: #f2f2f2; font-size: 13px;">대표승인</th>
 </tr>
 <tr>
 <td style="border: 1px solid black; height: 55px; font-weight: bold; vertical-align: middle; font-size: 14px;">{user_info['이름']}</td>
@@ -796,6 +794,9 @@ elif choice == "📅 연차 현황 달력":
     else:
         st.info("🌐 **전사** 검토/승인 및 대기 연차 내역이 표시됩니다.")
     
+    # 🚀 [추가] 달력 상에 공휴일을 뿌려주기 위해 공휴일 데이터 로드
+    df_holidays = load_holidays()
+    
     t = datetime.now()
     y_col, m_col = st.columns(2)
     s_y = y_col.selectbox("연도", [t.year, t.year+1, t.year-1], index=0)
@@ -804,15 +805,41 @@ elif choice == "📅 연차 현황 달력":
     cal_list = calendar.monthcalendar(s_y, s_m)
     st.write(f"### {s_y}년 {s_m}월")
     c_heads = st.columns(7)
-    for i, d_name in enumerate(["월","화","수","목","금","토","일"]): c_heads[i].write(f"**{d_name}**")
+    
+    # 요일 헤더 칼라 적용 (토:파랑 / 일:빨강)
+    for i, d_name in enumerate(["월","화","수","목","금","토","일"]):
+        if i == 5: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
+        elif i == 6: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
+        else: c_heads[i].write(f"**{d_name}**")
     
     for week in cal_list:
         c_days = st.columns(7)
         for i, day in enumerate(week):
             if day != 0:
                 target_dt = f"{s_y}-{s_m:02d}-{day:02d}"
+                
+                # 🚀 [추가] 해당 날짜가 구글시트에 등록된 공휴일인지 판정
+                is_holiday = False
+                holiday_name = ""
+                if not df_holidays.empty:
+                    h_match = df_holidays[df_holidays['Date'] == target_dt]
+                    if not h_match.empty:
+                        is_holiday = True
+                        holiday_name = h_match.iloc[0]['Name']
+                
+                # 🚀 [추가] 토요일/일요일/공휴일별 날짜 폰트 색상 부여 (토:파랑, 일/공휴일:빨강)
+                if is_holiday or i == 6:
+                    txt = f"<span style='color:#E53935; font-weight:bold; font-size:1.1em;'>{day}</span>"
+                elif i == 5:
+                    txt = f"<span style='color:#1E88E5; font-weight:bold; font-size:1.1em;'>{day}</span>"
+                else:
+                    txt = f"**{day}**"
+                
+                # 🚀 [추가] 공휴일인 경우 달력 날짜칸 바로 밑에 빨간색 휴일 배지 박스 노출
+                if is_holiday:
+                    txt += f"\n<div style='font-size:0.7em; background:#FFEBEE; padding:2px; border-radius:3px; margin-top:2px; color:#C62828; font-weight:bold; border: 1px solid #FFCDD2; text-align:center;'>🌴 {holiday_name}</div>"
+                
                 evs = cal_p[cal_p['Date'] == target_dt]
-                txt = f"**{day}**"
                 for _, ev in evs.iterrows():
                     color = "#E3F2FD" 
                     if "반차" in ev['Type']: color = "#FFFDE7"
@@ -849,7 +876,6 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
         df_plans.to_excel(writer, sheet_name=f"PLANS_{sel_year}", index=False)
         current_notices.to_excel(writer, sheet_name="NOTICES", index=False)
         
-        # 🚀 [추가] 엑셀 백업본에 HOLIDAYS 탭도 포함
         current_holidays = load_holidays()
         if not current_holidays.empty:
             current_holidays.to_excel(writer, sheet_name="HOLIDAYS", index=False)
@@ -858,7 +884,6 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
     st.download_button("📥 현재 구글시트 최신 데이터를 엑셀 백업본으로 다운로드", data=buffer, file_name=f"vacation_data_backup_{sel_year}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     st.divider()
 
-    # 🚀 [추가] 공휴일 관리 탭 신설
     tab_list, tab_stat, tab_notice, tab_mail, tab_holiday, tab_emp, tab_rollover = st.tabs(["📋 전사 로그 관리", "📈 월간 사용 통계", "📝 연차촉진 공지사항", "📧 리마인드 메일 발송", "🌴 공휴일 관리", "👥 임직원 정보", "🗓️ 차기 연도 DB 생성"])
     
     with tab_list:
@@ -980,7 +1005,7 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
         else:
             st.success("✅ 향후 7일 이내에 리마인드 안내 메일을 발송할 대상자가 없습니다. (모두 발송 완료)")
 
-    # 🚀 [추가] 관리자 메뉴 - 공휴일 관리 탭
+    # 🚀 관리자 메뉴 - 공휴일 관리 탭
     with tab_holiday:
         st.subheader("🌴 법정 공휴일 / 회사 휴무일 관리")
         st.info("이곳에 등록된 날짜는 직원이 기간으로 연차를 신청할 때 자동으로 신청(차감) 일수에서 제외됩니다.")
@@ -1020,7 +1045,7 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                 st.rerun()
                 
     with tab_rollover:
-        st.subheader("🗓️ 차기 연도 DB 자동 생성 및 연차 리셋")
+        st.subheader("🗓️ 차기 연도 DB 생성 및 연차 리셋")
         st.info("💡 입사일을 기준으로 근속연수를 계산하여 새해 연차가 자동으로 부여되며, 관련 탭이 구글시트에 생성됩니다.")
         
         create_year = st.number_input("생성할 기준 연도 (예: 내년도)", min_value=2026, value=sel_year + 1, step=1)
