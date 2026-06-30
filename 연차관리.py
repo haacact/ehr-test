@@ -433,11 +433,9 @@ elif choice == "🏠 내 연차 신청/현황":
                 else: start_date = end_date = None
             else: start_date = end_date = v_date
                 
-            if start_date and end_date:
-                df_holidays = load_holidays()
-                holiday_list = df_holidays['Date'].tolist() if not df_holidays.empty_col == '': []
-                if not df_holidays.empty: holiday_list = df_holidays['Date'].tolist()
-                else: holiday_list = []
+       if start_date and end_date:
+          df_holidays = load_holidays()
+         holiday_list = df_holidays['Date'].tolist() if not df_holidays.empty else []
                 
                 date_list = []
                 delta = end_date - start_date
