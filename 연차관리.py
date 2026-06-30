@@ -8,7 +8,7 @@ import math
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.header import Header  
+from email.header import Header
 import io
 import json
 import gspread
@@ -128,6 +128,26 @@ def load_notices():
     except:
         return pd.DataFrame(columns=["ID", "날짜", "제목", "내용"])
 
+# 🚀 [추가] 휴일(공휴일) 데이터를 불러오는 함수
+@st.cache_data(ttl=30)
+def load_holidays():
+    try:
+        client = get_gspread_client()
+        sheet = client.open(SPREADSHEET_NAME)
+        try: ws_holidays = sheet.worksheet("HOLIDAYS")
+        except gspread.exceptions.WorksheetNotFound:
+            ws_holidays = sheet.add_worksheet(title="HOLIDAYS", rows="100", cols="5")
+            ws_holidays.append_row(["Date", "Name"])
+            
+        h_data = ws_holidays.get_all_values()
+        if len(h_data) <= 1:
+            df_h = pd.DataFrame(columns=["Date", "Name"])
+        else:
+            df_h = pd.DataFrame(h_data[1:], columns=h_data[0])
+        return df_h
+    except:
+        return pd.DataFrame(columns=["Date", "Name"])
+
 def update_sheet(ws_name, df):
     try:
         client = get_gspread_client()
@@ -173,6 +193,13 @@ def save_notices_only(df_notices):
         return True
     return False
 
+# 🚀 [추가] 휴일 데이터 저장 함수
+def save_holidays_only(df_h):
+    if update_sheet("HOLIDAYS", df_h):
+        load_holidays.clear()
+        return True
+    return False
+
 def save_emp_only(df_emp, year):
     e_name, _ = get_ws_names(year)
     if update_sheet(e_name, df_emp):
@@ -196,7 +223,6 @@ def calculate_vacation_accrual(join_date_str, target_year):
     except:
         return 15.0 
 
-# 🚀 [기존] 7일 전 알림 메일 함수
 def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
     if not to_email or "@" not in to_email:
         return False
@@ -217,7 +243,6 @@ def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
     except:
         return False
 
-# 🚀 [신규] 결재권자(팀장/파트장)에게 보내는 신청 알림 메일 함수
 def send_application_alert_email(to_emails, emp_name, date_str, v_type, v_reason):
     if not to_emails: return False
     subject = f"[결재요청] {emp_name}님 {v_type} 신청 건"
@@ -318,7 +343,6 @@ if not st.session_state['logged_in']:
 
 sel_year = st.session_state['selected_year']
 df_emp, df_plans = load_data(sel_year)
-
 df_emp, df_plans = auto_convert_expired_plans(df_emp, df_plans, sel_year)
 
 user_info = df_emp[df_emp['ID'] == st.session_state['user_info']['ID']].iloc[0]
@@ -412,14 +436,21 @@ elif choice == "🏠 내 연차 신청/현황":
             else: start_date = end_date = v_date
                 
             if start_date and end_date:
+                # 🚀 [추가] 휴일 리스트 불러오기 (날짜를 계산하기 직전에 호출)
+                df_holidays = load_holidays()
+                holiday_list = df_holidays['Date'].tolist() if not df_holidays.empty else []
+                
                 date_list = []
                 delta = end_date - start_date
                 for i in range(delta.days + 1):
                     dt = start_date + timedelta(days=i)
-                    if dt.weekday() < 5: date_list.append(dt.strftime("%Y-%m-%d"))
+                    dt_str = dt.strftime("%Y-%m-%d")
+                    # 🚀 [업데이트] 주말(토,일) 뿐만 아니라 시트에 등록된 법정 공휴일도 건너뛰기
+                    if dt.weekday() < 5 and dt_str not in holiday_list: 
+                        date_list.append(dt_str)
                 
                 if not date_list:
-                    st.error("❌ 선택한 기간에 평일이 없습니다.")
+                    st.error("❌ 선택한 기간에 평일(출근일)이 없습니다. (공휴일/주말 제외됨)")
                 else:
                     dup_dates = []
                     for d_str in date_list:
@@ -460,24 +491,19 @@ elif choice == "🏠 내 연차 신청/현황":
                 df_plans = pd.concat([df_plans, pd.DataFrame(new_rows)], ignore_index=True)
                 
                 if save_plans_only(df_plans, sel_year):
-                    # 🚀 [추가] 결재권자 탐색 및 알림 메일 발송 로직
                     approvers = pd.DataFrame()
                     if user_info['permission'] == '팀원' and str(user_info['파트']).strip() != "":
-                        # 파트 소속 팀원의 경우 1차 결재자인 '파트장'을 먼저 찾음
                         approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['파트'] == user_info['파트']) & (df_emp['permission'] == '파트장')]
-                        if approvers.empty: # 파트장이 공석인 경우 팀장에게 발송
+                        if approvers.empty:
                             approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'] == '팀장')]
                     elif user_info['permission'] in ['팀원', '파트장']:
-                        # 파트장이나, 파트가 없는 팀원의 경우 결재자는 '팀장'
                         approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'] == '팀장')]
                     elif user_info['permission'] == '팀장':
-                        # 팀장의 결재자는 '총괄'
                         approvers = df_emp[df_emp['permission'] == '총괄']
                         
                     if not approvers.empty:
                         to_emails = [str(e).strip() for e in approvers['EMAIL'] if pd.notna(e) and "@" in str(e)]
                         if to_emails:
-                            # 💡 백그라운드 발송 처리 (에러가 나더라도 신청 로직에 영향이 없도록)
                             send_application_alert_email(to_emails, user_info['이름'], dates_str, st.session_state['temp_type'], st.session_state['temp_reason'])
 
                     st.session_state['apply_success'] = True
@@ -822,12 +848,18 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
         df_emp.to_excel(writer, sheet_name=f"Employees_{sel_year}", index=False)
         df_plans.to_excel(writer, sheet_name=f"PLANS_{sel_year}", index=False)
         current_notices.to_excel(writer, sheet_name="NOTICES", index=False)
+        
+        # 🚀 [추가] 엑셀 백업본에 HOLIDAYS 탭도 포함
+        current_holidays = load_holidays()
+        if not current_holidays.empty:
+            current_holidays.to_excel(writer, sheet_name="HOLIDAYS", index=False)
     buffer.seek(0)
     
     st.download_button("📥 현재 구글시트 최신 데이터를 엑셀 백업본으로 다운로드", data=buffer, file_name=f"vacation_data_backup_{sel_year}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     st.divider()
 
-    tab_list, tab_stat, tab_notice, tab_mail, tab_emp, tab_rollover = st.tabs(["📋 전사 로그 관리", "📈 월간 사용 통계", "📝 연차촉진 공지사항", "📧 리마인드 메일 발송", "👥 임직원 정보", "🗓️ 차기 연도 DB 생성(Rollover)"])
+    # 🚀 [추가] 공휴일 관리 탭 신설
+    tab_list, tab_stat, tab_notice, tab_mail, tab_holiday, tab_emp, tab_rollover = st.tabs(["📋 전사 로그 관리", "📈 월간 사용 통계", "📝 연차촉진 공지사항", "📧 리마인드 메일 발송", "🌴 공휴일 관리", "👥 임직원 정보", "🗓️ 차기 연도 DB 생성"])
     
     with tab_list:
         valid_plans = df_plans[df_plans['Emp_ID'] != ""]
@@ -947,6 +979,33 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                     st.rerun()
         else:
             st.success("✅ 향후 7일 이내에 리마인드 안내 메일을 발송할 대상자가 없습니다. (모두 발송 완료)")
+
+    # 🚀 [추가] 관리자 메뉴 - 공휴일 관리 탭
+    with tab_holiday:
+        st.subheader("🌴 법정 공휴일 / 회사 휴무일 관리")
+        st.info("이곳에 등록된 날짜는 직원이 기간으로 연차를 신청할 때 자동으로 신청(차감) 일수에서 제외됩니다.")
+        df_holidays = load_holidays()
+        
+        with st.form("add_holiday", clear_on_submit=True):
+            h_date = st.date_input("휴일 날짜")
+            h_name = st.text_input("휴일 이름 (예: 추석, 광복절, 창립기념일)")
+            if st.form_submit_button("➕ 휴일 추가") and h_name:
+                new_h = pd.DataFrame([{"Date": h_date.strftime("%Y-%m-%d"), "Name": h_name}])
+                df_holidays = pd.concat([df_holidays, new_h], ignore_index=True).drop_duplicates(subset=['Date'])
+                if save_holidays_only(df_holidays): 
+                    st.success(f"{h_date.strftime('%Y-%m-%d')} ({h_name}) 등록 완료!")
+                    st.rerun()
+        
+        st.write("▼ 등록된 휴일 목록 (체크 후 삭제 가능)")
+        if not df_holidays.empty:
+            df_h_edit = df_holidays.copy()
+            df_h_edit['선택'] = False
+            ed_h = st.data_editor(df_h_edit[['선택', 'Date', 'Name']], hide_index=True, use_container_width=True)
+            if st.button("🗑️ 선택 항목 삭제", key="del_h"):
+                keep_dates = ed_h[ed_h['선택'] == False]['Date'].tolist()
+                if save_holidays_only(df_holidays[df_holidays['Date'].isin(keep_dates)]):
+                    st.warning("선택한 휴일이 삭제되었습니다.")
+                    st.rerun()
 
     with tab_emp:
         st.subheader("👥 임직원 정보 관리")
