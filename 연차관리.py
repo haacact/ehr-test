@@ -798,18 +798,20 @@ elif choice == "📅 연차 현황 달력":
     # 🚀 [추가] 달력 상에 공휴일을 뿌려주기 위해 공휴일 데이터 로드
     df_holidays = load_holidays()
     
-    t = datetime.now()
+   t = datetime.now()
     y_col, m_col = st.columns(2)
     s_y = y_col.selectbox("연도", [t.year, t.year+1, t.year-1], index=0)
     s_m = m_col.selectbox("월", range(1, 13), index=t.month-1)
-
+    
+    # 🚀 [수정] 달력 시작 요일을 일요일(SUNDAY)로 변경
     calendar.setfirstweekday(calendar.SUNDAY)
     cal_list = calendar.monthcalendar(s_y, s_m)
+    
     st.write(f"### {s_y}년 {s_m}월")
     c_heads = st.columns(7)
     
-    # 요일 헤더 칼라 적용 (토:파랑 / 일:빨강)
-  for i, d_name in enumerate(["일","월","화","수","목","금","토"]):
+    # 🚀 [수정] 요일 헤더 순서 및 색상 적용 (일:빨강 / 토:파랑)
+    for i, d_name in enumerate(["일","월","화","수","목","금","토"]):
         if i == 0: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
         elif i == 6: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
         else: c_heads[i].write(f"**{d_name}**")
@@ -820,7 +822,7 @@ elif choice == "📅 연차 현황 달력":
             if day != 0:
                 target_dt = f"{s_y}-{s_m:02d}-{day:02d}"
                 
-                # 🚀 [추가] 해당 날짜가 구글시트에 등록된 공휴일인지 판정
+                # 🚀 해당 날짜가 구글시트에 등록된 공휴일인지 판정
                 is_holiday = False
                 holiday_name = ""
                 if not df_holidays.empty:
@@ -829,15 +831,15 @@ elif choice == "📅 연차 현황 달력":
                         is_holiday = True
                         holiday_name = h_match.iloc[0]['Name']
                 
-                # 🚀 [추가] 토요일/일요일/공휴일별 날짜 폰트 색상 부여 (토:파랑, 일/공휴일:빨강)
-                if is_holiday or i == 6:
+                # 🚀 [수정] 토요일/일요일/공휴일별 날짜 폰트 색상 부여 (일(0) 및 공휴일:빨강, 토(6):파랑)
+                if is_holiday or i == 0:
                     txt = f"<span style='color:#E53935; font-weight:bold; font-size:1.1em;'>{day}</span>"
-                elif i == 5:
+                elif i == 6:
                     txt = f"<span style='color:#1E88E5; font-weight:bold; font-size:1.1em;'>{day}</span>"
                 else:
                     txt = f"**{day}**"
                 
-                # 🚀 [추가] 공휴일인 경우 달력 날짜칸 바로 밑에 빨간색 휴일 배지 박스 노출
+                # 공휴일인 경우 달력 날짜칸 바로 밑에 빨간색 휴일 배지 박스 노출
                 if is_holiday:
                     txt += f"\n<div style='font-size:0.7em; background:#FFEBEE; padding:2px; border-radius:3px; margin-top:2px; color:#C62828; font-weight:bold; border: 1px solid #FFCDD2; text-align:center;'>🌴 {holiday_name}</div>"
                 
@@ -854,7 +856,7 @@ elif choice == "📅 연차 현황 달력":
                         
                 c_days[i].markdown(txt, unsafe_allow_html=True)
         st.divider()
-
+        
 # --- 📊 부서/전사 모니터링 ---
 elif choice == "📊 부서/전사 모니터링":
     if user_info['permission'] == "관리자":
