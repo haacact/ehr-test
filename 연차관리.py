@@ -208,7 +208,7 @@ def save_emp_only(df_emp, year):
 def calculate_vacation_accrual(join_date_str, target_year):
     try:
         j_dt = datetime.strptime(str(join_date_str).strip(), "%Y-%m-%d")
-        total_months = (target_year - j_dt.year) * 12 + (1 - j_dt.month) Full_years = total_months // 12
+        total_months = (target_year - j_dt.year) * 12 + (1 - j_dt.month)  # 뒤에 붙은 걸 지우고 여기서 줄바꿈!
         if 1 < j_dt.day: total_months -= 1
         if total_months < 0: return 0.0 
         full_years = total_months // 12
