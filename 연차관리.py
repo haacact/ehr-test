@@ -809,9 +809,9 @@ elif choice == "📅 연차 현황 달력":
     c_heads = st.columns(7)
     
     # 요일 헤더 칼라 적용 (토:파랑 / 일:빨강)
-    for i, d_name in enumerate(["월","화","수","목","금","토","일"]):
-        if i == 5: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
-        elif i == 6: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
+  for i, d_name in enumerate(["일","월","화","수","목","금","토"]):
+        if i == 0: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
+        elif i == 6: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
         else: c_heads[i].write(f"**{d_name}**")
     
     for week in cal_list:
