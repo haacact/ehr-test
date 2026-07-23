@@ -595,7 +595,7 @@ elif choice == "📑 신청서 출력":
 <th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">담당</th>
 <th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">파트검토</th>
 <th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">팀장승인</th>
-<th style="border: 1px solid black; padding: 75px; width: 75px; background: #f2f2f2; font-size: 13px;">대표승인</th>
+<th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">대표승인</th>
 </tr>
 <tr>
 <td style="border: 1px solid black; height: 55px; font-weight: bold; vertical-align: middle; font-size: 14px;">{user_info['이름']}</td>
