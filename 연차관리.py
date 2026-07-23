@@ -8,14 +8,11 @@ import math
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.header import Header
+from email.header import Header  
 import io
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-
-# --- [페이지 기본 설정] --- (가장 상단에 위치해야 안전합니다)
-st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
 # --- [구글 시트 연동 설정] ---
 SPREADSHEET_NAME = "vacation_data"     
@@ -24,8 +21,7 @@ SPREADSHEET_NAME = "vacation_data"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "haacact@gmail.com"
-# st.secrets에 등록을 권장하지만, 즉시 실행되도록 get()의 기본값으로 기존 비밀번호를 유지했습니다.
-SENDER_PASSWORD = st.secrets.get("email_password", "gjurrycgnypvyilk")
+SENDER_PASSWORD = "gjurrycgnypvyilk"
 
 @st.cache_resource
 def get_gspread_client():
@@ -234,7 +230,7 @@ def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
         msg['To'] = to_email
-        msg['Subject'] = Header(subject, 'utf-8')
+        msg['Subject'] = Header(subject, 'utf-8').encode()
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
@@ -253,7 +249,7 @@ def send_application_alert_email(to_emails, emp_name, date_str, v_type, v_reason
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
         msg['To'] = ", ".join(to_emails)
-        msg['Subject'] = Header(subject, 'utf-8')
+        msg['Subject'] = Header(subject, 'utf-8').encode()
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
@@ -307,6 +303,7 @@ def execute_manual_reminders(df_emp, df_plans, year):
         save_plans_only(df_plans, year)
     return success_count
 
+st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
 st.sidebar.page_link("https://hiairac-expense-sysem.onrender.com/", label="경비 시스템 가기", icon="💸")
 st.sidebar.divider()
@@ -344,6 +341,7 @@ if not st.session_state['logged_in']:
 
 sel_year = st.session_state['selected_year']
 df_emp, df_plans = load_data(sel_year)
+
 df_emp, df_plans = auto_convert_expired_plans(df_emp, df_plans, sel_year)
 
 user_info = df_emp[df_emp['ID'] == st.session_state['user_info']['ID']].iloc[0]
@@ -490,13 +488,15 @@ elif choice == "🏠 내 연차 신청/현황":
                 df_plans = pd.concat([df_plans, pd.DataFrame(new_rows)], ignore_index=True)
                 
                 if save_plans_only(df_plans, sel_year):
+                    # 🚀 [업데이트] 결재권자(총괄/팀장 겸임) 탐색 및 알림 메일 발송 로직
                     approvers = pd.DataFrame()
                     if user_info['permission'] == '팀원' and str(user_info['파트']).strip() != "":
                         approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['파트'] == user_info['파트']) & (df_emp['permission'] == '파트장')]
                         if approvers.empty:
-                            approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'] == '팀장')]
+                            # 파트장이 없으면 팀장이나 총괄을 찾아야 함
+                            approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'].isin(['팀장', '총괄']))]
                     elif user_info['permission'] in ['팀원', '파트장']:
-                        approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'] == '팀장')]
+                        approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'].isin(['팀장', '총괄']))]
                     elif user_info['permission'] == '팀장':
                         approvers = df_emp[df_emp['permission'] == '총괄']
                         
@@ -693,8 +693,11 @@ elif choice == "✅ 팀원 결재 관리 (검토/승인)":
             display_df = all_merged[(all_merged['팀'] == user_info['팀']) & (all_merged['permission'] != "팀장") & (all_merged['Status'].isin(["대기", "검토완료"]))]
             st.info(f"🚩 **{user_info['팀']}** 팀장 권한: 파트장 검토가 끝난 내역을 **[최종 승인]** 처리합니다.")
         elif user_info['permission'] == "총괄":
-            display_df = all_merged[(all_merged['permission'] == "팀장") & (all_merged['Status'] == "대기")]
-            st.info("🌐 **총괄(상무) 권한**: 팀장 직급의 연차 신청 건을 **[최종 승인]** 처리합니다.")
+            # 🚀 [업데이트] 총괄이 소속팀의 팀원 신청건도 승인할 수 있도록 조건 확장
+            cond1 = (all_merged['permission'] == "팀장") & (all_merged['Status'] == "대기")
+            cond2 = (all_merged['팀'] == user_info['팀']) & (all_merged['permission'] != "총괄") & (all_merged['Status'].isin(["대기", "검토완료"]))
+            display_df = all_merged[cond1 | cond2]
+            st.info(f"🌐 **총괄 권한**: 전사 팀장 직급 연차 건 및 소속팀({user_info['팀']})의 연차 건을 **[최종 승인]** 처리합니다.")
         else: 
             display_df = all_merged[all_merged['Status'].isin(["대기", "검토완료"])]
             st.info("⚙️ **시스템 관리자 권한**: 전사 모든 검토/승인 대기 로그를 모니터링합니다.")
@@ -764,7 +767,10 @@ elif choice == "✅ 팀원 결재 관리 (검토/승인)":
         elif user_info['permission'] == "팀장":
             history_df = all_merged[(all_merged['팀'] == user_info['팀']) & (all_merged['Status'].isin(["승인", "반려"]))]
         elif user_info['permission'] == "총괄":
-            history_df = all_merged[(all_merged['permission'] == "팀장") & (all_merged['Status'].isin(["승인", "반려"]))]
+            # 🚀 [업데이트] 히스토리에서도 소속팀 내역 볼 수 있도록 확장
+            cond1 = (all_merged['permission'] == "팀장") & (all_merged['Status'].isin(["승인", "반려"]))
+            cond2 = (all_merged['팀'] == user_info['팀']) & (all_merged['permission'] != "총괄") & (all_merged['Status'].isin(["승인", "반려"]))
+            history_df = all_merged[cond1 | cond2]
         else:
             history_df = all_merged[all_merged['Status'].isin(["승인", "반려"])]
 
@@ -795,7 +801,6 @@ elif choice == "📅 연차 현황 달력":
     else:
         st.info("🌐 **전사** 검토/승인 및 대기 연차 내역이 표시됩니다.")
     
-    # 🚀 [추가] 달력 상에 공휴일을 뿌려주기 위해 공휴일 데이터 로드
     df_holidays = load_holidays()
     
     t = datetime.now()
@@ -803,17 +808,13 @@ elif choice == "📅 연차 현황 달력":
     s_y = y_col.selectbox("연도", [t.year, t.year+1, t.year-1], index=0)
     s_m = m_col.selectbox("월", range(1, 13), index=t.month-1)
     
-    # 🚀 [수정] 달력 시작 요일을 일요일(SUNDAY)로 변경
-    calendar.setfirstweekday(calendar.SUNDAY)
     cal_list = calendar.monthcalendar(s_y, s_m)
-     
     st.write(f"### {s_y}년 {s_m}월")
     c_heads = st.columns(7)
     
-    # 🚀 [수정] 요일 헤더 순서 및 색상 적용 (일:빨강 / 토:파랑)
-    for i, d_name in enumerate(["일","월","화","수","목","금","토"]):
-        if i == 0: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
-        elif i == 6: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
+    for i, d_name in enumerate(["월","화","수","목","금","토","일"]):
+        if i == 5: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
+        elif i == 6: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
         else: c_heads[i].write(f"**{d_name}**")
     
     for week in cal_list:
@@ -822,7 +823,6 @@ elif choice == "📅 연차 현황 달력":
             if day != 0:
                 target_dt = f"{s_y}-{s_m:02d}-{day:02d}"
                 
-                # 🚀 해당 날짜가 구글시트에 등록된 공휴일인지 판정
                 is_holiday = False
                 holiday_name = ""
                 if not df_holidays.empty:
@@ -831,15 +831,13 @@ elif choice == "📅 연차 현황 달력":
                         is_holiday = True
                         holiday_name = h_match.iloc[0]['Name']
                 
-                # 🚀 [수정] 토요일/일요일/공휴일별 날짜 폰트 색상 부여 (일(0) 및 공휴일:빨강, 토(6):파랑)
-                if is_holiday or i == 0:
+                if is_holiday or i == 6:
                     txt = f"<span style='color:#E53935; font-weight:bold; font-size:1.1em;'>{day}</span>"
-                elif i == 6:
+                elif i == 5:
                     txt = f"<span style='color:#1E88E5; font-weight:bold; font-size:1.1em;'>{day}</span>"
                 else:
                     txt = f"**{day}**"
                 
-                # 공휴일인 경우 달력 날짜칸 바로 밑에 빨간색 휴일 배지 박스 노출
                 if is_holiday:
                     txt += f"\n<div style='font-size:0.7em; background:#FFEBEE; padding:2px; border-radius:3px; margin-top:2px; color:#C62828; font-weight:bold; border: 1px solid #FFCDD2; text-align:center;'>🌴 {holiday_name}</div>"
                 
@@ -856,7 +854,7 @@ elif choice == "📅 연차 현황 달력":
                         
                 c_days[i].markdown(txt, unsafe_allow_html=True)
         st.divider()
-        
+
 # --- 📊 부서/전사 모니터링 ---
 elif choice == "📊 부서/전사 모니터링":
     if user_info['permission'] == "관리자":
@@ -1009,7 +1007,6 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
         else:
             st.success("✅ 향후 7일 이내에 리마인드 안내 메일을 발송할 대상자가 없습니다. (모두 발송 완료)")
 
-    # 🚀 관리자 메뉴 - 공휴일 관리 탭
     with tab_holiday:
         st.subheader("🌴 법정 공휴일 / 회사 휴무일 관리")
         st.info("이곳에 등록된 날짜는 직원이 기간으로 연차를 신청할 때 자동으로 신청(차감) 일수에서 제외됩니다.")
@@ -1049,7 +1046,7 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                 st.rerun()
                 
     with tab_rollover:
-        st.subheader("🗓️ 차기 연도 DB 생성 및 연차 리셋")
+        st.subheader("🗓️ 차기 연도 DB 자동 생성 및 연차 리셋")
         st.info("💡 입사일을 기준으로 근속연수를 계산하여 새해 연차가 자동으로 부여되며, 관련 탭이 구글시트에 생성됩니다.")
         
         create_year = st.number_input("생성할 기준 연도 (예: 내년도)", min_value=2026, value=sel_year + 1, step=1)
