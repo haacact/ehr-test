@@ -8,11 +8,14 @@ import math
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.header import Header  
+from email.header import Header
 import io
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+
+# --- [페이지 기본 설정] --- (가장 상단에 위치해야 안전합니다)
+st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
 # --- [구글 시트 연동 설정] ---
 SPREADSHEET_NAME = "vacation_data"     
@@ -21,7 +24,8 @@ SPREADSHEET_NAME = "vacation_data"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "haacact@gmail.com"
-SENDER_PASSWORD = "gjurrycgnypvyilk"
+# st.secrets에 등록을 권장하지만, 즉시 실행되도록 get()의 기본값으로 기존 비밀번호를 유지했습니다.
+SENDER_PASSWORD = st.secrets.get("email_password", "gjurrycgnypvyilk")
 
 @st.cache_resource
 def get_gspread_client():
@@ -230,7 +234,7 @@ def send_vacation_reminder_email(to_email, emp_name, date_str, v_type):
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
         msg['To'] = to_email
-        msg['Subject'] = Header(subject, 'utf-8').encode()
+        msg['Subject'] = Header(subject, 'utf-8')
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
@@ -249,7 +253,7 @@ def send_application_alert_email(to_emails, emp_name, date_str, v_type, v_reason
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
         msg['To'] = ", ".join(to_emails)
-        msg['Subject'] = Header(subject, 'utf-8').encode()
+        msg['Subject'] = Header(subject, 'utf-8')
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
@@ -279,37 +283,40 @@ def auto_convert_expired_plans(df_emp, df_plans, year):
         save_emp_and_plans(df_emp, df_plans, year)
     return df_emp, df_plans
 
-def execute_manual_reminders(df_emp, df_plans, year):
+# 🚀 [업데이트] 선택한 ID 목록(selected_plan_ids)만 처리하도록 변경
+def execute_manual_reminders(df_emp, df_plans, year, selected_plan_ids):
     today_date = datetime.now().date()
     success_count = 0
     for idx, row in df_plans.iterrows():
-        if row['Status'] == '승인' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "":
-            try:
-                plan_date = datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date()
-                if 1 <= (plan_date - today_date).days <= 7:
-                    emp_id = str(row['Emp_ID'])
-                    emp_info = df_emp[df_emp['ID'].astype(str) == emp_id]
-                    if not emp_info.empty:
-                        emp_email = emp_info.iloc[0].get('EMAIL', '')
-                        emp_name = emp_info.iloc[0]['이름']
-                        if emp_email and "@" in str(emp_email):
-                            if send_vacation_reminder_email(emp_email, emp_name, row['Date'], row['Type']):
-                                df_plans.at[idx, 'Reminder_Sent'] = 'Y'
-                                success_count += 1
-                        else:
-                            df_plans.at[idx, 'Reminder_Sent'] = 'E'
-            except: pass
+        # 체크박스에서 선택된 Plan_ID만 이메일 발송 대상으로 삼음
+        if str(row['ID']) in selected_plan_ids:
+            if row['Status'] == '승인' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "":
+                try:
+                    plan_date = datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date()
+                    if 1 <= (plan_date - today_date).days <= 7:
+                        emp_id = str(row['Emp_ID'])
+                        emp_info = df_emp[df_emp['ID'].astype(str) == emp_id]
+                        if not emp_info.empty:
+                            emp_email = emp_info.iloc[0].get('EMAIL', '')
+                            emp_name = emp_info.iloc[0]['이름']
+                            if emp_email and "@" in str(emp_email):
+                                if send_vacation_reminder_email(emp_email, emp_name, row['Date'], row['Type']):
+                                    df_plans.at[idx, 'Reminder_Sent'] = 'Y'
+                                    success_count += 1
+                            else:
+                                df_plans.at[idx, 'Reminder_Sent'] = 'E'
+                except: pass
     if success_count > 0:
         save_plans_only(df_plans, year)
     return success_count
 
-st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
-
+# 🚀 [UI 보완] 멀티페이지 네비게이션 바로 아래에 동일한 룩앤필로 경비 시스템 링크 삽입
 st.sidebar.page_link("https://hiairac-expense-sysem.onrender.com/", label="경비 시스템 가기", icon="💸")
 st.sidebar.divider()
 
 available_years = get_available_years()
 
+# --- [에러 해결] 각각의 변수가 없으면 무조건 독립적으로 만들어주도록 분리 ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
     
@@ -320,6 +327,7 @@ if 'selected_year' not in st.session_state:
     now_y = datetime.now().year
     default_y = now_y if now_y in available_years else available_years[-1]
     st.session_state['selected_year'] = default_y
+# -----------------------------------------------------------------
 
 if not st.session_state['logged_in']:
     st.title("🔐 사내 연차 관리 시스템")
@@ -342,6 +350,7 @@ if not st.session_state['logged_in']:
 sel_year = st.session_state['selected_year']
 df_emp, df_plans = load_data(sel_year)
 
+# 🚀 [자동화 추가] 기동 시 연차계획 만료건 3일 스캐너 자동 실행
 df_emp, df_plans = auto_convert_expired_plans(df_emp, df_plans, sel_year)
 
 user_info = df_emp[df_emp['ID'] == st.session_state['user_info']['ID']].iloc[0]
@@ -488,12 +497,10 @@ elif choice == "🏠 내 연차 신청/현황":
                 df_plans = pd.concat([df_plans, pd.DataFrame(new_rows)], ignore_index=True)
                 
                 if save_plans_only(df_plans, sel_year):
-                    # 🚀 [업데이트] 결재권자(총괄/팀장 겸임) 탐색 및 알림 메일 발송 로직
                     approvers = pd.DataFrame()
                     if user_info['permission'] == '팀원' and str(user_info['파트']).strip() != "":
                         approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['파트'] == user_info['파트']) & (df_emp['permission'] == '파트장')]
                         if approvers.empty:
-                            # 파트장이 없으면 팀장이나 총괄을 찾아야 함
                             approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'].isin(['팀장', '총괄']))]
                     elif user_info['permission'] in ['팀원', '파트장']:
                         approvers = df_emp[(df_emp['팀'] == user_info['팀']) & (df_emp['permission'].isin(['팀장', '총괄']))]
@@ -693,7 +700,6 @@ elif choice == "✅ 팀원 결재 관리 (검토/승인)":
             display_df = all_merged[(all_merged['팀'] == user_info['팀']) & (all_merged['permission'] != "팀장") & (all_merged['Status'].isin(["대기", "검토완료"]))]
             st.info(f"🚩 **{user_info['팀']}** 팀장 권한: 파트장 검토가 끝난 내역을 **[최종 승인]** 처리합니다.")
         elif user_info['permission'] == "총괄":
-            # 🚀 [업데이트] 총괄이 소속팀의 팀원 신청건도 승인할 수 있도록 조건 확장
             cond1 = (all_merged['permission'] == "팀장") & (all_merged['Status'] == "대기")
             cond2 = (all_merged['팀'] == user_info['팀']) & (all_merged['permission'] != "총괄") & (all_merged['Status'].isin(["대기", "검토완료"]))
             display_df = all_merged[cond1 | cond2]
@@ -767,7 +773,6 @@ elif choice == "✅ 팀원 결재 관리 (검토/승인)":
         elif user_info['permission'] == "팀장":
             history_df = all_merged[(all_merged['팀'] == user_info['팀']) & (all_merged['Status'].isin(["승인", "반려"]))]
         elif user_info['permission'] == "총괄":
-            # 🚀 [업데이트] 히스토리에서도 소속팀 내역 볼 수 있도록 확장
             cond1 = (all_merged['permission'] == "팀장") & (all_merged['Status'].isin(["승인", "반려"]))
             cond2 = (all_merged['팀'] == user_info['팀']) & (all_merged['permission'] != "총괄") & (all_merged['Status'].isin(["승인", "반려"]))
             history_df = all_merged[cond1 | cond2]
@@ -808,13 +813,15 @@ elif choice == "📅 연차 현황 달력":
     s_y = y_col.selectbox("연도", [t.year, t.year+1, t.year-1], index=0)
     s_m = m_col.selectbox("월", range(1, 13), index=t.month-1)
     
+    calendar.setfirstweekday(calendar.SUNDAY)
     cal_list = calendar.monthcalendar(s_y, s_m)
+    
     st.write(f"### {s_y}년 {s_m}월")
     c_heads = st.columns(7)
     
-    for i, d_name in enumerate(["월","화","수","목","금","토","일"]):
-        if i == 5: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
-        elif i == 6: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
+    for i, d_name in enumerate(["일","월","화","수","목","금","토"]):
+        if i == 0: c_heads[i].write(f"<span style='color:#E53935;'>**{d_name}**</span>", unsafe_allow_html=True)
+        elif i == 6: c_heads[i].write(f"<span style='color:#1E88E5;'>**{d_name}**</span>", unsafe_allow_html=True)
         else: c_heads[i].write(f"**{d_name}**")
     
     for week in cal_list:
@@ -831,9 +838,9 @@ elif choice == "📅 연차 현황 달력":
                         is_holiday = True
                         holiday_name = h_match.iloc[0]['Name']
                 
-                if is_holiday or i == 6:
+                if is_holiday or i == 0:
                     txt = f"<span style='color:#E53935; font-weight:bold; font-size:1.1em;'>{day}</span>"
-                elif i == 5:
+                elif i == 6:
                     txt = f"<span style='color:#1E88E5; font-weight:bold; font-size:1.1em;'>{day}</span>"
                 else:
                     txt = f"**{day}**"
@@ -977,9 +984,10 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                             st.warning("삭제 완료!")
                             st.rerun()
 
+    # 🚀 [업데이트] 리마인드 메일 발송 제어판 - 체크박스 선택 발송 기능 추가
     with tab_mail:
         st.subheader("📧 다가오는 휴가 일정 리마인드 발송 제어판 (D-7)")
-        st.info("💡 아래 명단은 향후 1~7일 이내에 연차/휴가 일정이 다가왔으나, 아직 알림을 받지 않은 [승인 완료된] 임직원들입니다.")
+        st.info("💡 1~7일 이내에 연차/휴가 일정이 다가왔으나, 아직 알림을 받지 않은 임직원들입니다. 발송할 대상을 체크하고 버튼을 누르세요.")
         
         today_date = datetime.now().date()
         preview_rows = []
@@ -991,6 +999,7 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                         emp_info = df_emp[df_emp['ID'].astype(str) == str(row['Emp_ID'])]
                         if not emp_info.empty:
                             preview_rows.append({
+                                "Plan_ID": str(row['ID']), # 🚀 식별용 ID 추가
                                 "사번": row['Emp_ID'], "이름": emp_info.iloc[0]['이름'], 
                                 "부서": emp_info.iloc[0]['팀'], "예정일자": row['Date'], 
                                 "구분": row['Type'], "이메일": emp_info.iloc[0].get('EMAIL', '')
@@ -998,12 +1007,22 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                 except: pass
                 
         if preview_rows:
-            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
-            if st.button("🚀 위 대상자 전원에게 리마인드 메일 즉시 일괄 발송", type="primary", use_container_width=True):
-                with st.spinner("사내 메일 인프라 통신 중..."):
-                    sent_cnt = execute_manual_reminders(df_emp, df_plans, sel_year)
-                    st.success(f"🎉 총 {sent_cnt}명의 대상 직원에게 리마인드 안내 메일을 성공적으로 발송했습니다!")
-                    st.rerun()
+            preview_df = pd.DataFrame(preview_rows)
+            all_mail_selected = st.checkbox("전체 대상 선택 / 해제", value=True, key="mail_all_select")
+            preview_df.insert(0, '선택', all_mail_selected)
+            
+            # 편집 가능한 표 UI 구성
+            edited_mail = st.data_editor(preview_df, hide_index=True, use_container_width=True, disabled=["Plan_ID", "사번", "이름", "부서", "예정일자", "구분", "이메일"])
+            selected_plans = edited_mail[edited_mail['선택'] == True]['Plan_ID'].tolist()
+            
+            if st.button("🚀 선택 대상자에게 리마인드 메일 즉시 발송", type="primary", use_container_width=True):
+                if not selected_plans:
+                    st.warning("선택된 발송 대상자가 없습니다.")
+                else:
+                    with st.spinner("사내 메일 인프라 통신 중..."):
+                        sent_cnt = execute_manual_reminders(df_emp, df_plans, sel_year, selected_plans)
+                        st.success(f"🎉 총 {sent_cnt}명의 선택된 직원에게 리마인드 안내 메일을 성공적으로 발송했습니다!")
+                        st.rerun()
         else:
             st.success("✅ 향후 7일 이내에 리마인드 안내 메일을 발송할 대상자가 없습니다. (모두 발송 완료)")
 
