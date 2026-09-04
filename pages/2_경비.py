@@ -54,18 +54,22 @@ HEADERS = ["trip_id", "order", "team", "date", "user", "place", "content", "item
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1QBilxwvsIllnve90k438xaSsPSs8jwgQmq1Hpj8xGas/edit?gid=0#gid=0"
 
+
+# 👇 여기서부터 아래 코드로 덮어쓰세요!
 @st.cache_resource
-def get_gsheet_client():
+def get_gsheet_client(url):  # 👈 url 파라미터를 새로 추가했습니다.
     try:
-        # 스트림릿 서버(또는 로컬 secrets.toml)에 저장된 Secrets 값을 불러와서 인증
         creds_json_str = st.secrets["gcp_service_account"]
         creds_dict = json.loads(creds_json_str)
         gc = gspread.service_account_from_dict(creds_dict)
-        doc = gc.open_by_url(SHEET_URL)
+        doc = gc.open_by_url(url)  # 👈 받아온 url을 사용하도록 변경
         return doc.sheet1
     except Exception as e:
         st.error(f"❌ 구글 시트 연결 실패! 스트림릿 Secrets 설정을 다시 확인해 주세요: {e}")
         return None
+
+# 함수 이름 모양을 바꿔서 강제로 새로운 캐시를 만들게 합니다.
+ws = get_gsheet_client(SHEET_URL)
 
 ws = get_gsheet_client()
 
