@@ -462,3 +462,42 @@ if display_trips:
     else:
         excel_data = generate_excel(display_trips, team, current_month_str)
         st.download_button(label="📥 소속 부서 엑셀 다운로드", data=excel_data, file_name=f"{team}_정산서_{current_month_str}.xlsx", type="primary")
+
+
+if submit_btn:
+        details, total_amount, desc_parts = [], 0, []
+        for _, row in edited_receipts.iterrows():
+            if pd.notna(row['category']) and str(row['category']).strip() != "" and row['amount'] > 0:
+                amt = int(row['amount'])
+                details.append({"id": f"r_{uuid.uuid4().hex[:6]}", "category": str(row['category']), "amount": amt})
+                total_amount += amt
+                desc_parts.append(f"{row['category']}: {amt:,}원")
+                
+        items_desc = " | ".join(desc_parts) if desc_parts else "등록된 영수증 없음"
+        
+        # 🌟 pandas/numpy 데이터 타입 충돌을 막기 위해 100% 파이썬 기본 문자열로 강제 변환
+        new_trip = [
+            str(uuid.uuid4().hex[:8]), 
+            "999", 
+            str(target_team), 
+            str(expense_date), 
+            str(user_name), 
+            str(place), 
+            str(content), 
+            str(items_desc), 
+            str(total_amount), 
+            json.dumps(details, ensure_ascii=False)
+        ]
+        
+        try:
+            # USER_ENTERED 옵션을 추가해 구글 시트가 데이터를 안전하게 인식하도록 전송
+            ws.append_row(new_trip, value_input_option='USER_ENTERED')
+            clear_cache()
+            st.success("✅ 성공적으로 등록되었습니다!")
+            st.rerun()
+            
+        except gspread.exceptions.APIError as api_error:
+            # 🚨 스트림릿이 숨겨버린 '진짜 구글 에러 메시지'를 화면에 강제 출력합니다!
+            st.error(f"🚨 구글 API 거부 에러: {api_error.response.text}")
+        except Exception as e:
+            st.error(f"❌ 데이터 전송 중 기타 오류 발생: {str(e)}")
