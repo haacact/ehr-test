@@ -49,18 +49,21 @@ CATEGORIES = ["교통비", "주차비", "식비", "숙박비", "소모품비", "
 HEADERS = ["trip_id", "order", "team", "date", "user", "place", "content", "items_desc", "total_amount", "details_json"]
 
 # ==========================================
-# 🌟 구글 스프레드시트 DB 연동
+# 🌟 구글 스프레드시트 DB 연동 (보안 인증 방식)
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1wJrlVE1RfDR48T4IliC2xjsvHXC-6gpWUZBeCqUxflE/edit?gid=0#gid=0"
 
 @st.cache_resource
 def get_gsheet_client():
     try:
-        gc = gspread.service_account(filename='credentials.json')
+        # 스트림릿 서버에 저장된 Secrets 값을 불러와서 딕셔너리로 변환 후 인증
+        creds_json_str = st.secrets["GOOGLE_CREDENTIALS"]
+        creds_dict = json.loads(creds_json_str)
+        gc = gspread.service_account_from_dict(creds_dict)
         doc = gc.open_by_url(SHEET_URL)
         return doc.sheet1
     except Exception as e:
-        st.error(f"❌ 구글 시트 연결 실패! credentials.json 파일 확인: {e}")
+        st.error(f"❌ 구글 시트 연결 실패! 스트림릿 Secrets 설정을 다시 확인해 주세요: {e}")
         return None
 
 ws = get_gsheet_client()
@@ -104,13 +107,13 @@ def edit_trip_dialog(trip):
         except: old_details = []
         if not old_details: old_details = [{"category": "", "amount": 0}]
         
-        st.markdown("**🧾 소속 영수증 금액 수정** (아래 표에서 추가/수정/삭제 가능)")
+        st.markdown("**🧾 소속 영수증 금액 수정** (아래 표에서 직접 타이핑 및 행 추가/삭제 가능)")
         edit_df = pd.DataFrame(old_details)
         
         edited_sub_receipts = st.data_editor(
             edit_df, num_rows="dynamic",
             column_config={
-                "id": None, # ID 열은 숨김 처리
+                "id": None, # ID 열은 사용자에게 보이지 않게 숨김
                 "category": st.column_config.SelectboxColumn("경비 구분", options=CATEGORIES, required=True),
                 "amount": st.column_config.NumberColumn("금액(원)", min_value=0, required=True)
             }, use_container_width=True
@@ -139,19 +142,18 @@ def edit_trip_dialog(trip):
                     ]
                     ws.update(f"A{row_idx}:J{row_idx}", [updated_vals])
                     clear_cache()
-                    st.success("✅ 수정 완료!")
+                    st.success("✅ 정상적으로 수정이 완료되었습니다!")
                     st.rerun()
                     break
 
     st.markdown("---")
-    # 폼 외부(팝업 하단)에 별도의 완전 삭제 버튼 배치
     if st.button("🗑️ 이 항목 완전 삭제", type="primary", use_container_width=True):
         records = ws.get_all_records()
         for i, r in enumerate(records):
             if str(r.get('trip_id')) == trip['trip_id']:
                 ws.delete_rows(i + 2)
                 clear_cache()
-                st.success("✅ 삭제 완료!")
+                st.success("✅ 항목이 안전하게 삭제되었습니다.")
                 st.rerun()
                 break
 
@@ -250,7 +252,6 @@ if team == "관리자":
 else:
     st.metric(f"선택 월 지출 총합", f"{dashboard_stats['총합']:,}원")
 
-# 차트 데이터 처리
 def process_top_10(data_dict):
     sorted_items = sorted(data_dict.items(), key=lambda x: x[1], reverse=True)
     if len(sorted_items) <= 10: return sorted_items
@@ -354,10 +355,10 @@ with st.form("add_expense_form"):
 st.divider()
 
 # ==========================================
-# 📋 팝업 연동 정산 목록 리스트 
+# 📋 정산 목록 리스트 (표 클릭 시 팝업 띄움)
 # ==========================================
 st.subheader(f"📋 {current_month_str} 등록된 출장 정산 목록")
-st.info("💡 **수정/삭제하려면 표에서 해당 내역(행)을 클릭해 주세요! 팝업창이 뜹니다.**")
+st.info("💡 **수정 및 삭제를 원하시면 아래 표에서 해당 내역(행)을 직접 클릭해 주세요!**")
 if team == "관리자": st.caption("전사 부서 전체 통합 노출 모드")
 
 display_trips = [t for t in filtered_trips if team == "관리자" or is_match_team(t.get('team'), team)]
@@ -368,7 +369,6 @@ if display_trips:
     df_view.index += 1
     df_view.columns = ['신청부서', '지출일자', '사용자', '출장지', '내용', '포함된 영수증 항목', '총 금액(원)']
     
-    # 🌟 핵심 수정: on_select="rerun" 을 사용하여 표 클릭 이벤트를 감지
     selection_event = st.dataframe(
         df_view, 
         use_container_width=True, 
@@ -376,12 +376,9 @@ if display_trips:
         selection_mode="single-row"
     )
     
-    # 사용자가 표에서 특정 행을 클릭(선택)했을 때 팝업 모달창을 띄우는 로직
     if len(selection_event.selection.rows) > 0:
         selected_index = selection_event.selection.rows[0]
         selected_trip_data = display_trips[selected_index]
-        
-        # 위에서 정의한 @st.dialog 팝업 함수 호출
         edit_trip_dialog(selected_trip_data)
         
 else:
@@ -389,7 +386,7 @@ else:
 
 
 # ==========================================
-# 📥 엑셀 다운로드 
+# 📥 엑셀 다운로드
 # ==========================================
 st.divider()
 st.subheader("📥 엑셀 다운로드")
