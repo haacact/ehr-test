@@ -347,8 +347,19 @@ with st.form("add_expense_form"):
             str(uuid.uuid4().hex[:8]), 999, target_team, str(expense_date), user_name, place, content, 
             items_desc, total_amount, json.dumps(details, ensure_ascii=False)
         ]
-        
-        ws.append_row(new_trip)
+       
+        # 기존: ws.append_row(new_trip)
+        # 아래 코드로 교체해주세요 👇
+        try:
+            # USER_ENTERED 옵션을 넣어야 구글 시트가 텍스트/숫자를 안 튕겨냅니다.
+            ws.append_row(new_trip, value_input_option='USER_ENTERED')
+            clear_cache()
+            st.success("✅ 성공적으로 등록되었습니다!")
+            st.rerun()
+        except gspread.exceptions.APIError as api_error:
+            # 🚨 구글 서버가 응답한 '진짜 에러 이유'를 화면에 빨간색으로 출력합니다!
+            st.error(f"🚨 구글 거부 에러 상세: {api_error.response.text}")
+       
         clear_cache()
         st.success("✅ 성공적으로 등록되었습니다!")
         st.rerun()
