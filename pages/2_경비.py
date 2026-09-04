@@ -51,7 +51,8 @@ HEADERS = ["trip_id", "order", "team", "date", "user", "place", "content", "item
 # ==========================================
 # 🌟 구글 스프레드시트 DB 연동 (보안 Secrets 방식)
 # ==========================================
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1wJrlVE1RfDR48T4IliC2xjsvHXC-6gpWUZBeCqUxflE/edit?gid=0#gid=0"
+
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1QBilxwvsIllnve90k438xaSsPSs8jwgQmq1Hpj8xGas/edit?gid=0#gid=0"
 
 @st.cache_resource
 def get_gsheet_client():
