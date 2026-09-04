@@ -49,15 +49,15 @@ CATEGORIES = ["교통비", "주차비", "식비", "숙박비", "소모품비", "
 HEADERS = ["trip_id", "order", "team", "date", "user", "place", "content", "items_desc", "total_amount", "details_json"]
 
 # ==========================================
-# 🌟 구글 스프레드시트 DB 연동 (보안 인증 방식)
+# 🌟 구글 스프레드시트 DB 연동 (보안 Secrets 방식)
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1wJrlVE1RfDR48T4IliC2xjsvHXC-6gpWUZBeCqUxflE/edit?gid=0#gid=0"
 
 @st.cache_resource
 def get_gsheet_client():
     try:
-        # 스트림릿 서버에 저장된 Secrets 값을 불러와서 딕셔너리로 변환 후 인증
-        creds_json_str = st.secrets["GOOGLE_CREDENTIALS"]
+        # 스트림릿 서버(또는 로컬 secrets.toml)에 저장된 Secrets 값을 불러와서 인증
+        creds_json_str = st.secrets["gcp_service_account"]
         creds_dict = json.loads(creds_json_str)
         gc = gspread.service_account_from_dict(creds_dict)
         doc = gc.open_by_url(SHEET_URL)
@@ -383,7 +383,6 @@ if display_trips:
         
 else:
     st.info("해당 월에 등록된 정산 내역이 없습니다.")
-
 
 # ==========================================
 # 📥 엑셀 다운로드
