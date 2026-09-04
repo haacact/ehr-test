@@ -30,7 +30,7 @@ CAFETERIA_EMAILS = {
 
 
 # --- [구글 시트 & 이메일 연동 인프라 설정] ---
-SPREADSHEET_NAME = "vacation_data"
+SPREADSHEET_NAME = "vacation_test"
 
 # 사내 이메일 서버 (Gmail SMTP 기준 연동)
 SMTP_SERVER = "smtp.gmail.com"
