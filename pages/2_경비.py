@@ -71,7 +71,6 @@ def get_gsheet_client(url):  # 👈 url 파라미터를 새로 추가했습니�
 # 함수 이름 모양을 바꿔서 강제로 새로운 캐시를 만들게 합니다.
 ws = get_gsheet_client(SHEET_URL)
 
-ws = get_gsheet_client()
 
 @st.cache_data(ttl=30)
 def get_all_trips():
