@@ -5,3 +5,4 @@ oauth2client
 openpyxl
 streamlit-drawable-canvas
 Pillow
+plotly
