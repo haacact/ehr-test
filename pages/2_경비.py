@@ -51,26 +51,21 @@ HEADERS = ["trip_id", "order", "team", "date", "user", "place", "content", "item
 # ==========================================
 # 🌟 구글 스프레드시트 DB 연동 (보안 Secrets 방식)
 # ==========================================
-
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1QBilxwvsIllnve90k438xaSsPSs8jwgQmq1Hpj8xGas/edit?gid=0#gid=0"
 
-
-# 👇 여기서부터 아래 코드로 덮어쓰세요!
 @st.cache_resource
-def get_gsheet_client(url):  # 👈 url 파라미터를 새로 추가했습니다.
+def get_gsheet_client(url):
     try:
         creds_json_str = st.secrets["gcp_service_account"]
         creds_dict = json.loads(creds_json_str)
         gc = gspread.service_account_from_dict(creds_dict)
-        doc = gc.open_by_url(url)  # 👈 받아온 url을 사용하도록 변경
+        doc = gc.open_by_url(url)
         return doc.sheet1
     except Exception as e:
         st.error(f"❌ 구글 시트 연결 실패! 스트림릿 Secrets 설정을 다시 확인해 주세요: {e}")
         return None
 
-# 함수 이름 모양을 바꿔서 강제로 새로운 캐시를 만들게 합니다.
 ws = get_gsheet_client(SHEET_URL)
-
 
 @st.cache_data(ttl=30)
 def get_all_trips():
@@ -111,15 +106,20 @@ def edit_trip_dialog(trip):
         except: old_details = []
         if not old_details: old_details = [{"category": "", "amount": 0}]
         
-        st.markdown("**🧾 소속 영수증 금액 수정** (아래 표에서 직접 타이핑 및 행 추가/삭제 가능)")
+        # 🌟 개선포인트 2: 개별 영수증 삭제를 위한 플래그 추가
+        for d in old_details:
+            d['삭제'] = False
+            
+        st.markdown("**🧾 소속 영수증 금액 수정** (우측 '삭제' 체크박스를 누르면 해당 영수증이 삭제됩니다)")
         edit_df = pd.DataFrame(old_details)
         
         edited_sub_receipts = st.data_editor(
             edit_df, num_rows="dynamic",
             column_config={
-                "id": None, # ID 열은 사용자에게 보이지 않게 숨김
+                "id": None, 
                 "category": st.column_config.SelectboxColumn("경비 구분", options=CATEGORIES, required=True),
-                "amount": st.column_config.NumberColumn("금액(원)", min_value=0, required=True)
+                "amount": st.column_config.NumberColumn("금액(원)", min_value=0, required=True),
+                "삭제": st.column_config.CheckboxColumn("🗑️ 개별 삭제", default=False)
             }, use_container_width=True
         )
         
@@ -128,6 +128,10 @@ def edit_trip_dialog(trip):
         if update_btn:
             new_details, total_amount, desc_parts = [], 0, []
             for _, row in edited_sub_receipts.iterrows():
+                # 🌟 개선포인트 2 반영: '삭제'에 체크된 행은 무시하고 넘김 (삭제 효과)
+                if row.get('삭제', False) == True:
+                    continue
+                    
                 if pd.notna(row.get('category')) and str(row.get('category')).strip() != "" and row.get('amount', 0) > 0:
                     item_id = row.get('id') if pd.notna(row.get('id')) else f"r_{uuid.uuid4().hex[:6]}"
                     new_details.append({"id": item_id, "category": row['category'], "amount": int(row['amount'])})
@@ -144,22 +148,15 @@ def edit_trip_dialog(trip):
                         r.get('trip_id'), r.get('order'), r.get('team'), str(edit_date),
                         edit_user, edit_place, edit_content, items_desc, total_amount, json.dumps(new_details, ensure_ascii=False)
                     ]
-                    ws.update(f"A{row_idx}:J{row_idx}", [updated_vals])
+                    try:
+                        ws.update(f"A{row_idx}:J{row_idx}", [updated_vals], value_input_option='USER_ENTERED')
+                    except:
+                        ws.update(f"A{row_idx}:J{row_idx}", [updated_vals])
+                        
                     clear_cache()
                     st.success("✅ 정상적으로 수정이 완료되었습니다!")
                     st.rerun()
                     break
-
-    st.markdown("---")
-    if st.button("🗑️ 이 항목 완전 삭제", type="primary", use_container_width=True):
-        records = ws.get_all_records()
-        for i, r in enumerate(records):
-            if str(r.get('trip_id')) == trip['trip_id']:
-                ws.delete_rows(i + 2)
-                clear_cache()
-                st.success("✅ 항목이 안전하게 삭제되었습니다.")
-                st.rerun()
-                break
 
 # ==========================================
 # 🔐 로그인 화면
@@ -350,19 +347,12 @@ with st.form("add_expense_form"):
             str(uuid.uuid4().hex[:8]), 999, target_team, str(expense_date), user_name, place, content, 
             items_desc, total_amount, json.dumps(details, ensure_ascii=False)
         ]
-       
-        # 기존: ws.append_row(new_trip)
-        # 아래 코드로 교체해주세요 👇
+        
         try:
-            # USER_ENTERED 옵션을 넣어야 구글 시트가 텍스트/숫자를 안 튕겨냅니다.
             ws.append_row(new_trip, value_input_option='USER_ENTERED')
-            clear_cache()
-            st.success("✅ 성공적으로 등록되었습니다!")
-            st.rerun()
-        except gspread.exceptions.APIError as api_error:
-            # 🚨 구글 서버가 응답한 '진짜 에러 이유'를 화면에 빨간색으로 출력합니다!
-            st.error(f"🚨 구글 거부 에러 상세: {api_error.response.text}")
-       
+        except:
+            ws.append_row(new_trip)
+            
         clear_cache()
         st.success("✅ 성공적으로 등록되었습니다!")
         st.rerun()
@@ -370,10 +360,10 @@ with st.form("add_expense_form"):
 st.divider()
 
 # ==========================================
-# 📋 정산 목록 리스트 (표 클릭 시 팝업 띄움)
+# 📋 정산 목록 리스트 (체크박스 일괄 삭제 및 팝업 연동)
 # ==========================================
 st.subheader(f"📋 {current_month_str} 등록된 출장 정산 목록")
-st.info("💡 **수정 및 삭제를 원하시면 아래 표에서 해당 내역(행)을 직접 클릭해 주세요!**")
+st.info("💡 **수정/삭제를 원하시면 체크박스(☑️)를 선택 후 아래 버튼을 눌러주세요.**")
 if team == "관리자": st.caption("전사 부서 전체 통합 노출 모드")
 
 display_trips = [t for t in filtered_trips if team == "관리자" or is_match_team(t.get('team'), team)]
@@ -381,23 +371,58 @@ display_trips = [t for t in filtered_trips if team == "관리자" or is_match_te
 if display_trips:
     df_display = pd.DataFrame(display_trips)
     df_view = df_display[['team', 'date', 'user', 'place', 'content', 'items_desc', 'total_amount']].copy()
-    df_view.index += 1
     df_view.columns = ['신청부서', '지출일자', '사용자', '출장지', '내용', '포함된 영수증 항목', '총 금액(원)']
     
-    selection_event = st.dataframe(
-        df_view, 
-        use_container_width=True, 
-        on_select="rerun", 
-        selection_mode="single-row"
+    # 🌟 개선포인트 1: 목록 맨 앞에 '선택' 체크박스 열 추가
+    df_view.insert(0, "선택", False)
+    
+    edited_list = st.data_editor(
+        df_view,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"선택": st.column_config.CheckboxColumn("☑️ 선택", default=False)}
     )
     
-    if len(selection_event.selection.rows) > 0:
-        selected_index = selection_event.selection.rows[0]
-        selected_trip_data = display_trips[selected_index]
-        edit_trip_dialog(selected_trip_data)
+    # 🌟 개선포인트 1: 체크박스가 선택된 항목 추출
+    selected_rows = edited_list[edited_list["선택"] == True]
+    
+    if len(selected_rows) > 0:
+        st.markdown("---")
+        c1, c2 = st.columns(2)
+        
+        if len(selected_rows) == 1:
+            selected_idx = selected_rows.index[0]
+            selected_trip_data = display_trips[selected_idx]
+            with c1:
+                # 단일 선택 시 수정 팝업 열기 버튼 활성화
+                if st.button("✏️ 선택한 항목 1개 수정/상세보기", use_container_width=True):
+                    edit_trip_dialog(selected_trip_data)
+        else:
+            with c1:
+                st.warning(f"ℹ️ {len(selected_rows)}개 항목이 선택되었습니다. (수정은 1개씩만 가능합니다)")
+        
+        with c2:
+            # 복수 선택/단일 선택 공통 일괄 삭제 기능
+            if st.button(f"🗑️ 선택한 {len(selected_rows)}개 항목 일괄 삭제", type="primary", use_container_width=True):
+                trip_ids_to_delete = [display_trips[i]['trip_id'] for i in selected_rows.index]
+                records = ws.get_all_records()
+                
+                rows_to_delete = []
+                for i, r in enumerate(records):
+                    if str(r.get('trip_id')) in trip_ids_to_delete:
+                        rows_to_delete.append(i + 2)
+                
+                # 역순으로 지워야 엑셀 행 번호가 밀리는 것을 방지함
+                for r_idx in sorted(rows_to_delete, reverse=True):
+                    ws.delete_rows(r_idx)
+                    
+                clear_cache()
+                st.success(f"✅ {len(selected_rows)}개 항목이 정상적으로 일괄 삭제되었습니다!")
+                st.rerun()
         
 else:
     st.info("해당 월에 등록된 정산 내역이 없습니다.")
+
 
 # ==========================================
 # 📥 엑셀 다운로드
@@ -477,18 +502,3 @@ if display_trips:
     else:
         excel_data = generate_excel(display_trips, team, current_month_str)
         st.download_button(label="📥 소속 부서 엑셀 다운로드", data=excel_data, file_name=f"{team}_정산서_{current_month_str}.xlsx", type="primary")
-
-
-if submit_btn:
-        details, total_amount, desc_parts = [], 0, []
-        for _, row in edited_receipts.iterrows():
-            if pd.notna(row['category']) and str(row['category']).strip() != "" and row['amount'] > 0:
-                amt = int(row['amount'])
-                details.append({"id": f"r_{uuid.uuid4().hex[:6]}", "category": str(row['category']), "amount": amt})
-                total_amount += amt
-                desc_parts.append(f"{row['category']}: {amt:,}원")
-                
-        items_desc = " | ".join(desc_parts) if desc_parts else "등록된 영수증 없음"
-        
-        # 🌟 pandas/numpy 데이터 타입 충돌을 막기 위해 100% 파이썬 기본 문자열로 강제 변환
-  
