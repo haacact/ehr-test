@@ -89,74 +89,93 @@ def is_match_team(db_team, target_team):
     return db_team.replace('팀', '').strip() == target_team.replace('팀', '').strip()
 
 # ==========================================
-# 🎁 팝업창(Modal) UI 컴포넌트 선언
+# 🛠️ 팝업 업데이트용 헬퍼 함수
+# ==========================================
+def _save_trip_updates(trip_id, edit_date, edit_user, edit_place, edit_content, details, team, order):
+    total_amount = sum(d['amount'] for d in details)
+    desc_parts = [f"{d['category']}: {d['amount']:,}원" for d in details]
+    items_desc = " | ".join(desc_parts) if desc_parts else "등록된 영수증 없음"
+    
+    records = ws.get_all_records()
+    for i, r in enumerate(records):
+        if str(r.get('trip_id')) == trip_id:
+            row_idx = i + 2
+            updated_vals = [
+                trip_id, order, team, str(edit_date),
+                edit_user, edit_place, edit_content, items_desc, total_amount, json.dumps(details, ensure_ascii=False)
+            ]
+            try: ws.update(f"A{row_idx}:J{row_idx}", [updated_vals], value_input_option='USER_ENTERED')
+            except: ws.update(f"A{row_idx}:J{row_idx}", [updated_vals])
+            clear_cache()
+            break
+            
+def _delete_trip_entirely(trip_id):
+    records = ws.get_all_records()
+    for i, r in enumerate(records):
+        if str(r.get('trip_id')) == trip_id:
+            ws.delete_rows(i + 2)
+            clear_cache()
+            break
+
+# ==========================================
+# 🎁 팝업창(Modal) UI (개별 X 버튼 삭제 구현)
 # ==========================================
 @st.dialog("✏️ 출장 정산 내역 및 영수증 관리", width="large")
 def edit_trip_dialog(trip):
     st.info(f"💡 **{trip['user']}**님의 **{trip['content']}** 내역을 수정 중입니다.")
     
-    with st.form(f"edit_form_{trip['trip_id']}"):
-        e_col1, e_col2, e_col3 = st.columns(3)
-        edit_date = e_col1.date_input("지출 일자", value=datetime.strptime(trip['date'], '%Y-%m-%d'))
-        edit_user = e_col2.text_input("사용자 이름", value=trip['user'])
-        edit_place = e_col3.text_input("출장지", value=trip['place'])
-        edit_content = st.text_input("출장 목적 및 내용", value=trip['content'])
+    e_col1, e_col2, e_col3 = st.columns(3)
+    edit_date = e_col1.date_input("지출 일자", value=datetime.strptime(trip['date'], '%Y-%m-%d'))
+    edit_user = e_col2.text_input("사용자 이름", value=trip['user'])
+    edit_place = e_col3.text_input("출장지", value=trip['place'])
+    edit_content = st.text_input("출장 목적 및 내용", value=trip['content'])
+    
+    try: old_details = json.loads(trip['details_json'])
+    except: old_details = []
+    
+    st.markdown("#### 🧾 소속 영수증 관리")
+    st.caption("항목 옆의 **❌ 버튼을 누르면 해당 영수증이 즉시 삭제**되며 화면에 반영됩니다.")
+    
+    updated_details = []
+    
+    # 🌟 개선포인트 2: X 버튼을 누르면 즉시 삭제되도록 컬럼 기반 UI 적용
+    for i, d in enumerate(old_details):
+        rc1, rc2, rc3 = st.columns([4, 4, 2])
+        cat = rc1.selectbox("경비 구분", options=CATEGORIES, index=CATEGORIES.index(d['category']) if d['category'] in CATEGORIES else 0, key=f"cat_{trip['trip_id']}_{i}", label_visibility="collapsed")
+        amt = rc2.number_input("금액(원)", min_value=0, value=int(d['amount']), key=f"amt_{trip['trip_id']}_{i}", label_visibility="collapsed")
         
-        try: old_details = json.loads(trip['details_json'])
-        except: old_details = []
-        if not old_details: old_details = [{"category": "", "amount": 0}]
-        
-        # 🌟 개선포인트 2: 개별 영수증 삭제를 위한 플래그 추가
-        for d in old_details:
-            d['삭제'] = False
+        if rc3.button("❌ 삭제", key=f"del_{trip['trip_id']}_{i}", use_container_width=True):
+            old_details.pop(i)
+            _save_trip_updates(trip['trip_id'], edit_date, edit_user, edit_place, edit_content, old_details, trip['team'], trip['order'])
+            st.rerun()
+        else:
+            updated_details.append({"id": d.get('id', f"r_{uuid.uuid4().hex[:6]}"), "category": cat, "amount": amt})
             
-        st.markdown("**🧾 소속 영수증 금액 수정** (우측 '삭제' 체크박스를 누르면 해당 영수증이 삭제됩니다)")
-        edit_df = pd.DataFrame(old_details)
+    st.markdown("---")
+    st.markdown("##### ➕ 새 영수증 항목 추가")
+    ac1, ac2, ac3 = st.columns([4, 4, 2])
+    new_cat = ac1.selectbox("추가할 경비 구분", options=CATEGORIES, key=f"new_cat_{trip['trip_id']}", label_visibility="collapsed")
+    new_amt = ac2.number_input("추가할 금액(원)", min_value=0, value=0, key=f"new_amt_{trip['trip_id']}", label_visibility="collapsed")
+    
+    if ac3.button("➕ 항목 추가", key=f"add_{trip['trip_id']}", use_container_width=True):
+        if new_amt > 0:
+            updated_details.append({"id": f"r_{uuid.uuid4().hex[:6]}", "category": new_cat, "amount": new_amt})
+            _save_trip_updates(trip['trip_id'], edit_date, edit_user, edit_place, edit_content, updated_details, trip['team'], trip['order'])
+            st.rerun()
+        else:
+            st.warning("금액을 1원 이상 입력해주세요.")
+
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    if c1.button("💾 위 수정된 기본정보 모두 저장", type="primary", use_container_width=True):
+        _save_trip_updates(trip['trip_id'], edit_date, edit_user, edit_place, edit_content, updated_details, trip['team'], trip['order'])
+        st.success("저장되었습니다!")
+        st.rerun()
         
-        edited_sub_receipts = st.data_editor(
-            edit_df, num_rows="dynamic",
-            column_config={
-                "id": None, 
-                "category": st.column_config.SelectboxColumn("경비 구분", options=CATEGORIES, required=True),
-                "amount": st.column_config.NumberColumn("금액(원)", min_value=0, required=True),
-                "삭제": st.column_config.CheckboxColumn("🗑️ 개별 삭제", default=False)
-            }, use_container_width=True
-        )
-        
-        update_btn = st.form_submit_button("💾 변경사항 저장", type="primary", use_container_width=True)
-        
-        if update_btn:
-            new_details, total_amount, desc_parts = [], 0, []
-            for _, row in edited_sub_receipts.iterrows():
-                # 🌟 개선포인트 2 반영: '삭제'에 체크된 행은 무시하고 넘김 (삭제 효과)
-                if row.get('삭제', False) == True:
-                    continue
-                    
-                if pd.notna(row.get('category')) and str(row.get('category')).strip() != "" and row.get('amount', 0) > 0:
-                    item_id = row.get('id') if pd.notna(row.get('id')) else f"r_{uuid.uuid4().hex[:6]}"
-                    new_details.append({"id": item_id, "category": row['category'], "amount": int(row['amount'])})
-                    total_amount += int(row['amount'])
-                    desc_parts.append(f"{row['category']}: {int(row['amount']):,}원")
-                    
-            items_desc = " | ".join(desc_parts) if desc_parts else "등록된 영수증 없음"
-            
-            records = ws.get_all_records()
-            for i, r in enumerate(records):
-                if str(r.get('trip_id')) == trip['trip_id']:
-                    row_idx = i + 2
-                    updated_vals = [
-                        r.get('trip_id'), r.get('order'), r.get('team'), str(edit_date),
-                        edit_user, edit_place, edit_content, items_desc, total_amount, json.dumps(new_details, ensure_ascii=False)
-                    ]
-                    try:
-                        ws.update(f"A{row_idx}:J{row_idx}", [updated_vals], value_input_option='USER_ENTERED')
-                    except:
-                        ws.update(f"A{row_idx}:J{row_idx}", [updated_vals])
-                        
-                    clear_cache()
-                    st.success("✅ 정상적으로 수정이 완료되었습니다!")
-                    st.rerun()
-                    break
+    if c2.button("🗑️ 이 출장내역 전체 완전 삭제", use_container_width=True):
+        _delete_trip_entirely(trip['trip_id'])
+        st.success("전체 삭제되었습니다!")
+        st.rerun()
 
 # ==========================================
 # 🔐 로그인 화면
@@ -202,7 +221,6 @@ with st.sidebar:
 
 ALL_TRIPS = get_all_trips()
 
-# 자동 정렬 로직 (시운전: 이름->날짜, 나머지: 날짜)
 def custom_sort(t):
     t_team, t_date, t_user, t_order = str(t.get('team', '')).strip(), str(t.get('date', '')), str(t.get('user', '')), int(t.get('order', 999))
     if t_team == '시운전팀': return (0, t_user, t_date, t_order)
@@ -363,7 +381,7 @@ st.divider()
 # 📋 정산 목록 리스트 (체크박스 일괄 삭제 및 팝업 연동)
 # ==========================================
 st.subheader(f"📋 {current_month_str} 등록된 출장 정산 목록")
-st.info("💡 **수정/삭제를 원하시면 체크박스(☑️)를 선택 후 아래 버튼을 눌러주세요.**")
+st.info("💡 **항목을 삭제하려면 왼쪽 체크박스(☑️)를 선택, 수정하려면 항목 1개를 선택 후 아래 버튼을 눌러주세요.**")
 if team == "관리자": st.caption("전사 부서 전체 통합 노출 모드")
 
 display_trips = [t for t in filtered_trips if team == "관리자" or is_match_team(t.get('team'), team)]
@@ -383,7 +401,7 @@ if display_trips:
         column_config={"선택": st.column_config.CheckboxColumn("☑️ 선택", default=False)}
     )
     
-    # 🌟 개선포인트 1: 체크박스가 선택된 항목 추출
+    # 선택된 항목 추출
     selected_rows = edited_list[edited_list["선택"] == True]
     
     if len(selected_rows) > 0:
@@ -394,16 +412,16 @@ if display_trips:
             selected_idx = selected_rows.index[0]
             selected_trip_data = display_trips[selected_idx]
             with c1:
-                # 단일 선택 시 수정 팝업 열기 버튼 활성화
-                if st.button("✏️ 선택한 항목 1개 수정/상세보기", use_container_width=True):
+                # 1개 선택 시에만 팝업 버튼 활성화
+                if st.button("✏️ 선택한 내역 수정/상세보기", use_container_width=True):
                     edit_trip_dialog(selected_trip_data)
         else:
             with c1:
                 st.warning(f"ℹ️ {len(selected_rows)}개 항목이 선택되었습니다. (수정은 1개씩만 가능합니다)")
         
         with c2:
-            # 복수 선택/단일 선택 공통 일괄 삭제 기능
-            if st.button(f"🗑️ 선택한 {len(selected_rows)}개 항목 일괄 삭제", type="primary", use_container_width=True):
+            # 일괄 삭제 버튼
+            if st.button(f"🗑️ 선택한 {len(selected_rows)}개 내역 일괄 삭제", type="primary", use_container_width=True):
                 trip_ids_to_delete = [display_trips[i]['trip_id'] for i in selected_rows.index]
                 records = ws.get_all_records()
                 
@@ -412,7 +430,7 @@ if display_trips:
                     if str(r.get('trip_id')) in trip_ids_to_delete:
                         rows_to_delete.append(i + 2)
                 
-                # 역순으로 지워야 엑셀 행 번호가 밀리는 것을 방지함
+                # 구글 시트 삭제 시 행 번호가 꼬이는 것을 막기 위해 아래(높은 번호)부터 지웁니다
                 for r_idx in sorted(rows_to_delete, reverse=True):
                     ws.delete_rows(r_idx)
                     
@@ -422,7 +440,6 @@ if display_trips:
         
 else:
     st.info("해당 월에 등록된 정산 내역이 없습니다.")
-
 
 # ==========================================
 # 📥 엑셀 다운로드
