@@ -22,7 +22,7 @@ st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 KST = ZoneInfo("Asia/Seoul")
 
 # --- [구글 시트 연동 설정] ---
-SPREADSHEET_NAME = "vacation_data"     
+SPREADSHEET_NAME = "vacation_test"     
 
 # --- [사내 아웃룩 연동] 메일 발송 설정 ---
 SMTP_SERVER = "smtp.gmail.com"
