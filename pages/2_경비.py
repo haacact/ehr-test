@@ -157,12 +157,14 @@ def edit_trip_dialog(trip):
                     break
 
 # ==========================================
-# 🔐 로그인 화면
+# 🔐 로그인 화면 및 세션 초기화
 # ==========================================
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'receipt_rows' not in st.session_state:
     st.session_state['receipt_rows'] = [{"category": "", "amount": 0}]
+if 'selected_team' not in st.session_state:
+    st.session_state['selected_team'] = "🌐 전사 통합"
 
 if not st.session_state['logged_in']:
     st.markdown("<h2 style='text-align: center; color: #1e3a8a;'>🔒 경비 정산 시스템</h2>", unsafe_allow_html=True)
@@ -213,7 +215,6 @@ dashboard_stats = {'총합': 0}
 for t_name in TEAMS_LIST: dashboard_stats[t_name] = 0
 
 for t in filtered_trips:
-    # 관리자가 아닐 때는 본인 팀만 연산에 포함
     if team != "관리자" and not is_match_team(t.get('team'), team):
         continue
         
@@ -227,24 +228,33 @@ for t in filtered_trips:
 st.subheader(f"📊 {current_month_str} 전사 부서/출장지 통합 대시보드" if team == "관리자" else f"📊 {current_month_str} {team} 현황 대시보드")
 
 if team == "관리자":
-    # 🌟 개선: 전체 13개 부서 데이터를 가로 6열씩 깔끔하게 정렬하여 모두 표시
-    metric_items = [("🔥 총 지출합계", dashboard_stats['총합'])] + [(t, dashboard_stats[t]) for t in TEAMS_LIST]
-    for i in range(0, len(metric_items), 6):
-        cols = st.columns(6)
-        for j in range(6):
+    # 🌟 개선: 라디오 버튼 대신 금액이 적힌 버튼 매트릭스로 UI 변경
+    metric_items = [("🌐 전사 통합", dashboard_stats['총합'])] + [(t, dashboard_stats[t]) for t in TEAMS_LIST]
+    
+    # 넓게 보이도록 5열 배치
+    for i in range(0, len(metric_items), 5):
+        cols = st.columns(5)
+        for j in range(5):
             if i + j < len(metric_items):
-                name, val = metric_items[i+j]
-                cols[j].metric(name, f"{val:,}원")
+                t_name, val = metric_items[i+j]
                 
+                # 선택된 팀의 버튼은 파란색(Primary)으로 돋보이게 처리
+                btn_type = "primary" if st.session_state['selected_team'] == t_name else "secondary"
+                
+                # 버튼 텍스트 구성 (팀명 + 금액)
+                btn_label = f"{t_name} \n {val:,}원"
+                
+                if cols[j].button(btn_label, key=f"dash_btn_{t_name}", type=btn_type, use_container_width=True):
+                    st.session_state['selected_team'] = t_name
+                    st.rerun()
+                    
+    dash_filter = st.session_state['selected_team']
     st.divider()
-    st.markdown("#### 🎯 아래 팀을 클릭하여 해당 팀의 차트 및 내역만 상세 조회하세요")
-    # 🌟 개선: 라디오 버튼을 활용해 클릭 탭처럼 작동하게 만듦
-    dash_filter = st.radio("조회할 부서를 클릭하세요:", ["🌐 전사 통합"] + TEAMS_LIST, horizontal=True, label_visibility="collapsed")
 else:
     st.metric(f"선택 월 지출 총합", f"{dashboard_stats['총합']:,}원")
     dash_filter = team
 
-# 2. 🌟 차트를 그리기 위한 세부 데이터 연산 (클릭한 팀 필터 반영)
+# 2. 🌟 차트를 그리기 위한 세부 데이터 연산 (클릭한 버튼 필터 반영)
 cat_stats = {cat: 0 for cat in CATEGORIES}
 place_stats = {}
 user_stats = {}
@@ -252,10 +262,8 @@ user_stats = {}
 for t in filtered_trips:
     t_team = str(t.get('team', '')).strip()
     
-    # 관리자 필터 분기
     if team == "관리자" and dash_filter != "🌐 전사 통합":
         if not is_match_team(t_team, dash_filter): continue
-    # 일반 사용자 필터 분기
     elif team != "관리자":
         if not is_match_team(t_team, team): continue
         
@@ -301,7 +309,6 @@ with col_c2:
     year_months = [f"{current_year_str}-{str(i).zfill(2)}" for i in range(1, 13)]
     yearly_trend = {m: 0 for m in year_months}
     
-    # 🌟 연도별 차트도 클릭한 팀 필터를 따르도록 동기화
     for t in ALL_TRIPS:
         t_team = str(t.get('team', '')).strip()
         if team == "관리자" and dash_filter != "🌐 전사 통합":
@@ -333,7 +340,6 @@ with st.form("add_expense_form"):
     col1, col2, col3, col4 = st.columns(4)
     target_team = team
     if team == "관리자":
-        # 위에서 관리자가 선택한 필터 부서가 있으면 자동으로 등록 대상도 맞춰줍니다 (편의성)
         default_idx = TEAMS_LIST.index(dash_filter) if dash_filter in TEAMS_LIST else 0
         target_team = col1.selectbox("부서 선택 (대리 등록)", TEAMS_LIST, index=default_idx)
     else:
@@ -391,7 +397,6 @@ st.divider()
 st.subheader(f"📋 {current_month_str} [{dash_filter}] 등록된 출장 정산 목록")
 st.info("💡 **수정/삭제를 원하시면 체크박스(☑️)를 선택 후 아래 버튼을 눌러주세요.**")
 
-# 🌟 목록 역시 위에서 클릭한 팀 데이터만 나오게 연동
 display_trips = []
 for t in filtered_trips:
     t_team = str(t.get('team', '')).strip()
@@ -533,7 +538,6 @@ if filtered_trips:
             else:
                 st.write("다운로드할 데이터가 없습니다.")
     else:
-        # 본인 팀 데이터
         team_trips = [t for t in filtered_trips if is_match_team(t.get('team'), team)]
         if team_trips:
             excel_data = generate_excel(team_trips, team, current_month_str)
