@@ -14,11 +14,11 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- [페이지 기본 설정] --- (가장 상단에 위치해야 안전합니다)
+# --- [페이지 기본 설정] --- 
 st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
 # --- [구글 시트 연동 설정] ---
-SPREADSHEET_NAME = "vacation_test"     
+SPREADSHEET_NAME = "vacation_data"     
 
 # --- [사내 아웃룩 연동] 메일 발송 설정 ---
 SMTP_SERVER = "smtp.gmail.com"
@@ -159,6 +159,7 @@ def load_promotion_logs(year):
         try: ws = sheet.worksheet(tab_name)
         except gspread.exceptions.WorksheetNotFound:
             ws = sheet.add_worksheet(title=tab_name, rows="100", cols="10")
+            # 💡 기존 시트 오류 방지를 위해 백엔드 컬럼명(서명상태, 서명일시)은 유지합니다.
             ws.append_row(['Emp_ID', '발송일시', '서명상태', '서명일시', '촉진잔여일수'])
             
         data = ws.get_all_values()
@@ -287,8 +288,9 @@ def send_application_alert_email(to_emails, emp_name, date_str, v_type, v_reason
 
 def send_promotion_alert_email(to_email, emp_name):
     if not to_email or "@" not in to_email: return False
-    subject = f"[중요] {emp_name}님, 2차 연차사용촉진서 열람 및 서명 요청"
-    body = f"안녕하세요. {emp_name}님,\n\n근로기준법에 의거하여 {emp_name}님의 미사용 연차에 대한 [2차 연차사용촉진서]가 발행되었습니다.\n\n사내 연차 관리 시스템에 로그인하시면 메인 화면 상단에 팝업이 노출됩니다.\n해당 문서를 읽으신 후, 반드시 [서명 및 확인] 버튼을 눌러 전자서명을 완료해 주시기 바랍니다.\n\n(본 메일은 아직 연차 잔액이 남아있는 사무직 임직원을 대상으로 발송되었습니다.)\n\n- 하이에어공조(주) 시스템 관리자 드림 -"
+    # 🚀 용어 수정: 서명 -> 확인
+    subject = f"[중요] {emp_name}님, 2차 연차사용촉진서 열람 및 확인 요청"
+    body = f"안녕하세요. {emp_name}님,\n\n근로기준법에 의거하여 {emp_name}님의 미사용 연차에 대한 [2차 연차사용촉진서]가 발행되었습니다.\n\n사내 연차 관리 시스템에 로그인하시면 메인 화면 상단에 팝업이 노출됩니다.\n해당 문서를 읽으신 후, 반드시 [확인 완료] 버튼을 눌러 주시기 바랍니다.\n\n(본 메일은 아직 연차 잔액이 남아있는 사무직 임직원을 대상으로 발송되었습니다.)\n\n- 하이에어공조(주) 시스템 관리자 드림 -"
     try:
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
@@ -428,9 +430,10 @@ elif choice == "🏠 내 연차 신청/현황":
     
     if not my_promo_log.empty:
         my_row = my_promo_log.iloc[0]
+        # 🚀 용어 수정: 서명상태 -> 확인상태 체크용 (호환성을 위해 기존 '미열람' 체크)
         if my_row['서명상태'] == '미열람':
-            st.error("🚨 [필독] 2차 연차사용촉진서가 발행되었습니다. 아래 문서를 확인하시고 반드시 전자서명을 완료해주세요.")
-            with st.expander("📄 [클릭] 개인별 2차 연차사용촉진서 열람 및 서명", expanded=True):
+            st.error("🚨 [필독] 2차 연차사용촉진서가 발행되었습니다. 아래 문서를 열람하시고 반드시 [확인 완료] 처리를 부탁드립니다.")
+            with st.expander("📄 [클릭] 개인별 2차 연차사용촉진서 열람 및 확인", expanded=True):
                 today_str = datetime.now().strftime("%Y년 %m월 %d일")
                 st.markdown(f"""
                 <div style='background-color:#fff; padding:20px; border:1px solid #ccc; color:black;'>
@@ -449,12 +452,13 @@ elif choice == "🏠 내 연차 신청/현황":
                 """, unsafe_allow_html=True)
                 
                 st.write("")
-                if st.button("✅ 본인은 위 내용을 모두 확인하였으며, 이에 전자서명합니다.", type="primary", use_container_width=True):
+                # 🚀 용어 수정: 전자서명 -> 확인
+                if st.button("✅ 본인은 위 잔여 연차 일수와 촉진 내용을 모두 확인하였습니다.", type="primary", use_container_width=True):
                     idx_promo = df_promo_logs[df_promo_logs['Emp_ID'] == str(user_info['ID'])].index[0]
-                    df_promo_logs.at[idx_promo, '서명상태'] = '서명완료'
+                    df_promo_logs.at[idx_promo, '서명상태'] = '확인완료'
                     df_promo_logs.at[idx_promo, '서명일시'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     if save_promotion_logs(df_promo_logs, sel_year):
-                        st.success("🎉 전자서명이 정상적으로 완료되었습니다. 감사합니다.")
+                        st.success("🎉 확인이 정상적으로 처리되었습니다. 감사합니다.")
                         st.rerun()
             st.divider()
 
@@ -677,7 +681,7 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
     st.download_button("📥 현재 구글시트 최신 데이터를 엑셀 백업본으로 다운로드", data=buffer, file_name=f"vacation_data_backup_{sel_year}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     st.divider()
 
-    tab_list, tab_stat, tab_promo, tab_notice, tab_mail, tab_holiday, tab_emp, tab_rollover = st.tabs(["📋 전사 로그", "📈 월간 통계", "💌 연차촉진 전자서명", "📝 공지사항", "📧 리마인드 메일", "🌴 공휴일", "👥 임직원", "🗓️ DB 롤오버"])
+    tab_list, tab_stat, tab_promo, tab_notice, tab_mail, tab_holiday, tab_emp, tab_rollover = st.tabs(["📋 전사 로그", "📈 월간 통계", "💌 연차촉진 확인현황", "📝 공지사항", "📧 리마인드 메일", "🌴 공휴일", "👥 임직원", "🗓️ DB 롤오버"])
     
     with tab_list:
         all_logs = df_plans[df_plans['Emp_ID'] != ""].merge(df_emp[['ID', '이름', '팀']], left_on='Emp_ID', right_on='ID')
@@ -703,12 +707,11 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
         st.dataframe(df_emp[['팀','ID','이름']].merge(u_stat, left_on='ID', right_on='Emp_ID', how='left').fillna({'val':0, '사용일':'-'})[['팀', 'ID', '이름', 'val', '사용일']], use_container_width=True, hide_index=True)
 
     with tab_promo:
-        st.subheader("💌 2차 연차사용촉진 발송 및 서명 현황")
+        st.subheader("💌 2차 연차사용촉진 발송 및 확인 현황")
         st.info("💡 사무직 대상 (사원(생산), 조장, 팀장, 외국인 제외) 중 진짜 미계획 연차(연차잔액 - 연차계획)가 1일이라도 남아있는 직원만 추출됩니다.")
         
         df_logs = load_promotion_logs(sel_year)
         
-        # 🚀 [추가] 발송 대상자도 체크박스로 선택할 수 있도록 개편
         exc_ranks = ['사원(생산)', '조장', '팀장', '외국인']
         eligible_emp = df_emp[~df_emp['직급'].str.strip().isin(exc_ranks)].copy()
         eligible_emp['실잔여'] = eligible_emp['연차잔액'] - eligible_emp['연차계획']
@@ -719,13 +722,14 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
         promo_status['발송일시'] = promo_status['발송일시'].fillna('-')
         promo_status['서명일시'] = promo_status['서명일시'].fillna('-')
         
-        promo_view = promo_status[['팀', '직급', 'ID', '이름', '실잔여', '서명상태', '발송일시', '서명일시']].rename(columns={'ID':'사번', '실잔여':'미계획잔여일'})
+        # 🚀 용어 수정: 서명상태 -> 확인상태
+        promo_view = promo_status[['팀', '직급', 'ID', '이름', '실잔여', '서명상태', '발송일시', '서명일시']].rename(columns={'ID':'사번', '실잔여':'미계획잔여일', '서명상태':'확인상태', '서명일시':'확인일시'})
         
         if not promo_view.empty:
             all_promo_selected = st.checkbox("전체 대상 선택 / 해제", value=True, key="promo_all_select")
             promo_view.insert(0, '선택', all_promo_selected)
             
-            edited_promo = st.data_editor(promo_view, hide_index=True, use_container_width=True, disabled=["팀", "직급", "사번", "이름", "미계획잔여일", "서명상태", "발송일시", "서명일시"])
+            edited_promo = st.data_editor(promo_view, hide_index=True, use_container_width=True, disabled=["팀", "직급", "사번", "이름", "미계획잔여일", "확인상태", "발송일시", "확인일시"])
             selected_promo_ids = edited_promo[edited_promo['선택'] == True]['사번'].tolist()
             
             if st.button("🚀 선택 대상에게 2차 연차촉진서 발행 및 안내 메일 발송", type="primary"):
@@ -743,7 +747,8 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                             emp_id = str(emp['ID'])
                             exist = new_logs[new_logs['Emp_ID'] == emp_id]
                             
-                            if exist.empty or exist.iloc[0]['서명상태'] != '서명완료':
+                            # 🚀 기존 '서명완료' 사용자도 호환되도록 처리
+                            if exist.empty or exist.iloc[0]['서명상태'] not in ['확인완료', '서명완료']:
                                 email = str(emp.get('EMAIL', ''))
                                 if "@" in email:
                                     send_promotion_alert_email(email, emp['이름'])
@@ -763,7 +768,7 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                             st.success(f"🎉 총 {send_cnt}건의 이메일 발송 및 구글 시트 등록이 완료되었습니다.")
                             st.rerun()
                         else:
-                            st.warning("선택 대상자 중 새로 발송할 대상자가 없습니다. (모두 이미 서명완료 상태)")
+                            st.warning("선택 대상자 중 새로 발송할 대상자가 없습니다. (모두 이미 확인완료 상태)")
         else:
             st.success("🎉 현재 2차 연차촉진 대상자가 없습니다. (모두 계획 완료 또는 대상 아님)")
 
