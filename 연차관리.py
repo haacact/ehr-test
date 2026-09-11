@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo  # 🚀 [추가] 타임존 설정을 위한 모듈
 import calendar
 import re
 import math
@@ -17,8 +18,11 @@ from oauth2client.service_account import ServiceAccountCredentials
 # --- [페이지 기본 설정] --- 
 st.set_page_config(page_title="사내 연차 관리 시스템", layout="wide")
 
+# 🚀 [추가] 대한민국 표준시(KST) 전역 설정
+KST = ZoneInfo("Asia/Seoul")
+
 # --- [구글 시트 연동 설정] ---
-SPREADSHEET_NAME = "vacation_test"     
+SPREADSHEET_NAME = "vacation_data"     
 
 # --- [사내 아웃룩 연동] 메일 발송 설정 ---
 SMTP_SERVER = "smtp.gmail.com"
@@ -159,7 +163,6 @@ def load_promotion_logs(year):
         try: ws = sheet.worksheet(tab_name)
         except gspread.exceptions.WorksheetNotFound:
             ws = sheet.add_worksheet(title=tab_name, rows="100", cols="10")
-            # 💡 기존 시트 오류 방지를 위해 백엔드 컬럼명(서명상태, 서명일시)은 유지합니다.
             ws.append_row(['Emp_ID', '발송일시', '서명상태', '서명일시', '촉진잔여일수'])
             
         data = ws.get_all_values()
@@ -288,7 +291,6 @@ def send_application_alert_email(to_emails, emp_name, date_str, v_type, v_reason
 
 def send_promotion_alert_email(to_email, emp_name):
     if not to_email or "@" not in to_email: return False
-    # 🚀 용어 수정: 서명 -> 확인
     subject = f"[중요] {emp_name}님, 2차 연차사용촉진서 열람 및 확인 요청"
     body = f"안녕하세요. {emp_name}님,\n\n근로기준법에 의거하여 {emp_name}님의 미사용 연차에 대한 [2차 연차사용촉진서]가 발행되었습니다.\n\n사내 연차 관리 시스템에 로그인하시면 메인 화면 상단에 팝업이 노출됩니다.\n해당 문서를 읽으신 후, 반드시 [확인 완료] 버튼을 눌러 주시기 바랍니다.\n\n(본 메일은 아직 연차 잔액이 남아있는 사무직 임직원을 대상으로 발송되었습니다.)\n\n- 하이에어공조(주) 시스템 관리자 드림 -"
     try:
@@ -306,7 +308,8 @@ def send_promotion_alert_email(to_email, emp_name):
     except: return False
 
 def auto_convert_expired_plans(df_emp, df_plans, year):
-    today_date = datetime.now().date()
+    # 🚀 KST 적용
+    today_date = datetime.now(KST).date()
     needs_save = False
     for idx, row in df_plans.iterrows():
         if row['Type'] == '연차계획' and row['Status'] == '승인':
@@ -325,7 +328,8 @@ def auto_convert_expired_plans(df_emp, df_plans, year):
     return df_emp, df_plans
 
 def execute_manual_reminders(df_emp, df_plans, year, selected_plan_ids):
-    today_date = datetime.now().date()
+    # 🚀 KST 적용
+    today_date = datetime.now(KST).date()
     success_count = 0
     for idx, row in df_plans.iterrows():
         if str(row['ID']) in selected_plan_ids:
@@ -357,7 +361,8 @@ available_years = get_available_years()
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'user_info' not in st.session_state: st.session_state['user_info'] = None
 if 'selected_year' not in st.session_state:
-    now_y = datetime.now().year
+    # 🚀 KST 적용
+    now_y = datetime.now(KST).year
     st.session_state['selected_year'] = now_y if now_y in available_years else available_years[-1]
 
 if not st.session_state['logged_in']:
@@ -430,11 +435,11 @@ elif choice == "🏠 내 연차 신청/현황":
     
     if not my_promo_log.empty:
         my_row = my_promo_log.iloc[0]
-        # 🚀 용어 수정: 서명상태 -> 확인상태 체크용 (호환성을 위해 기존 '미열람' 체크)
         if my_row['서명상태'] == '미열람':
             st.error("🚨 [필독] 2차 연차사용촉진서가 발행되었습니다. 아래 문서를 열람하시고 반드시 [확인 완료] 처리를 부탁드립니다.")
             with st.expander("📄 [클릭] 개인별 2차 연차사용촉진서 열람 및 확인", expanded=True):
-                today_str = datetime.now().strftime("%Y년 %m월 %d일")
+                # 🚀 KST 적용
+                today_str = datetime.now(KST).strftime("%Y년 %m월 %d일")
                 st.markdown(f"""
                 <div style='background-color:#fff; padding:20px; border:1px solid #ccc; color:black;'>
                 <h3 style='text-align:center;'>연 차 사 용 촉 진 통 보 서</h3><br>
@@ -452,11 +457,11 @@ elif choice == "🏠 내 연차 신청/현황":
                 """, unsafe_allow_html=True)
                 
                 st.write("")
-                # 🚀 용어 수정: 전자서명 -> 확인
                 if st.button("✅ 본인은 위 잔여 연차 일수와 촉진 내용을 모두 확인하였습니다.", type="primary", use_container_width=True):
                     idx_promo = df_promo_logs[df_promo_logs['Emp_ID'] == str(user_info['ID'])].index[0]
                     df_promo_logs.at[idx_promo, '서명상태'] = '확인완료'
-                    df_promo_logs.at[idx_promo, '서명일시'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    # 🚀 KST 적용
+                    df_promo_logs.at[idx_promo, '서명일시'] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     if save_promotion_logs(df_promo_logs, sel_year):
                         st.success("🎉 확인이 정상적으로 처리되었습니다. 감사합니다.")
                         st.rerun()
@@ -483,7 +488,8 @@ elif choice == "🏠 내 연차 신청/현황":
     col_l, col_r = st.columns([1, 2])
     with col_l:
         st.subheader("📝 신규 신청")
-        today = datetime.now().date()
+        # 🚀 KST 적용
+        today = datetime.now(KST).date()
         v_date = st.date_input("날짜 선택 (시작일과 종료일을 이어서 선택 가능)", value=(today, today))
         
         is_multi_day = isinstance(v_date, (tuple, list)) and len(v_date) == 2 and v_date[0] != v_date[1]
@@ -518,7 +524,8 @@ elif choice == "🏠 내 연차 신청/현황":
             
             if st.button("✅ 최종 확인"):
                 new_id = int(pd.to_numeric(df_plans["ID"], errors='coerce').max() + 1) if not df_plans.empty else 1
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # 🚀 KST 적용
+                now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                 new_rows = [{"ID": new_id + i, "Emp_ID": user_info['ID'], "Date": d, "Status": "대기", "Type": st.session_state['temp_type'], "Reason": st.session_state['temp_reason'], "Manager_Sign": "", "Part_Sign": "", "Apply_Time": now_str, "Approve_Time": "", "Reminder_Sent": ""} for i, d in enumerate(temp_dates)]
                 df_plans = pd.concat([df_plans, pd.DataFrame(new_rows)], ignore_index=True)
                 
@@ -567,11 +574,14 @@ elif choice == "📑 신청서 출력":
         s_doc = st.selectbox("출력할 항목을 선택하세요", my_valid_plans.apply(lambda x: f"[{x['ID']}] {x['Date']} ({x['Type']}) - {x['Status']}", axis=1).tolist())
         doc = my_valid_plans[my_valid_plans['ID'].astype(str) == str(s_doc.split(']')[0].replace('[', ''))].iloc[0]
         
+        # 🚀 KST 적용
+        apply_date_str = datetime.now(KST).strftime('%Y년 %m월 %d일')
+        
         html_template = f"""<div style="border: 1px solid #000; padding: 40px; background-color: white; color: black; font-family: 'Malgun Gothic'; width: 700px; margin: 0 auto; position: relative;">
 <div style="display: flex; justify-content: flex-end;">
 <table style="border-collapse: collapse; border: 1px solid black; text-align: center; color: black;"><tr><th rowspan="2" style="border: 1px solid black; padding: 5px; width: 30px; background: #f2f2f2; font-size: 13px;">결<br>재</th><th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">담당</th><th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">파트검토</th><th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">팀장승인</th><th style="border: 1px solid black; padding: 5px; width: 75px; background: #f2f2f2; font-size: 13px;">대표승인</th></tr><tr><td style="border: 1px solid black; height: 55px; font-weight: bold; vertical-align: middle; font-size: 14px;">{user_info['이름']}</td><td style="border: 1px solid black; height: 55px; font-weight: bold; vertical-align: middle; color: green; font-size: 14px;">{doc['Part_Sign']}</td><td style="border: 1px solid black; height: 55px; font-weight: bold; vertical-align: middle; color: blue; font-size: 14px;">{doc['Manager_Sign']}</td><td style="border: 1px solid black; height: 55px; vertical-align: middle;"></td></tr></table>
 </div><h1 style="text-align: center; margin-top: 15px; color: black; font-size: 28px; letter-spacing: 5px;">연 차 휴 가 신 청 서</h1><br><br>
-<table style="width: 100%; border-collapse: collapse; border: 1px solid black; color: black; font-size: 14px;"><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; width: 20%; font-weight: bold;">성 명</th><td style="border: 1px solid black; padding: 12px; width: 30%;">{user_info['이름']}</td><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; width: 20%; font-weight: bold;">사 번</th><td style="border: 1px solid black; padding: 12px; width: 30%;">{user_info['ID']}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">부 서</th><td style="border: 1px solid black; padding: 12px;">{user_info['팀']}</td><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">파 트</th><td style="border: 1px solid black; padding: 12px;">{user_info['파트'] if user_info['파트'] != "" else "-"}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">직 급</th><td colspan="3" style="border: 1px solid black; padding: 12px;">{user_info['직급'] if user_info['직급'] != "" else "-"}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">휴가 일자</th><td colspan="3" style="border: 1px solid black; padding: 12px;">{doc['Date']}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">휴가 구분</th><td colspan="3" style="border: 1px solid black; padding: 12px;">{doc['Type']}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; height: 100px; font-weight: bold;">신청 사유</th><td colspan="3" style="border: 1px solid black; padding: 12px; vertical-align: top;">{doc['Reason'] if pd.notna(doc.get('Reason')) and str(doc.get('Reason')).strip() != "" else "개인 용무"}</td></tr></table><br><br><p style="text-align: center; margin-top: 40px; font-size: 16px; color: black;">위와 같이 연차 휴가를 신청하오니 승인하여 주시기 바랍니다.</p><p style="text-align: center; margin-top: 30px; font-size: 14px; color: black;">{datetime.now().strftime('%Y년 %m월 %d일')}</p><br><div style="text-align: right; margin-top: 20px; padding-right: 40px; font-size: 15px; color: black;">신청인 : <b style="font-size: 16px;">{user_info['이름']}</b> <span style="position: relative; display: inline-block; width: 30px; text-align: center;">(인)<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 50px; height: 50px; border: 3px solid red; border-radius: 50%; color: red; font-weight: 900; font-size: 16px; line-height: 48px; text-align: center; z-index: 10; background: transparent; font-family: 'Malgun Gothic', sans-serif;">확인</div></span></div><br><br><h2 style="text-align: center; margin-top: 20px; color: black; font-size: 22px; letter-spacing: 2px;">하이에어공조(주) 귀하</h2></div>"""
+<table style="width: 100%; border-collapse: collapse; border: 1px solid black; color: black; font-size: 14px;"><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; width: 20%; font-weight: bold;">성 명</th><td style="border: 1px solid black; padding: 12px; width: 30%;">{user_info['이름']}</td><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; width: 20%; font-weight: bold;">사 번</th><td style="border: 1px solid black; padding: 12px; width: 30%;">{user_info['ID']}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">부 서</th><td style="border: 1px solid black; padding: 12px;">{user_info['팀']}</td><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">파 트</th><td style="border: 1px solid black; padding: 12px;">{user_info['파트'] if user_info['파트'] != "" else "-"}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">직 급</th><td colspan="3" style="border: 1px solid black; padding: 12px;">{user_info['직급'] if user_info['직급'] != "" else "-"}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">휴가 일자</th><td colspan="3" style="border: 1px solid black; padding: 12px;">{doc['Date']}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; font-weight: bold;">휴가 구분</th><td colspan="3" style="border: 1px solid black; padding: 12px;">{doc['Type']}</td></tr><tr><th style="border: 1px solid black; padding: 12px; background: #f2f2f2; height: 100px; font-weight: bold;">신청 사유</th><td colspan="3" style="border: 1px solid black; padding: 12px; vertical-align: top;">{doc['Reason'] if pd.notna(doc.get('Reason')) and str(doc.get('Reason')).strip() != "" else "개인 용무"}</td></tr></table><br><br><p style="text-align: center; margin-top: 40px; font-size: 16px; color: black;">위와 같이 연차 휴가를 신청하오니 승인하여 주시기 바랍니다.</p><p style="text-align: center; margin-top: 30px; font-size: 14px; color: black;">{apply_date_str}</p><br><div style="text-align: right; margin-top: 20px; padding-right: 40px; font-size: 15px; color: black;">신청인 : <b style="font-size: 16px;">{user_info['이름']}</b> <span style="position: relative; display: inline-block; width: 30px; text-align: center;">(인)<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 50px; height: 50px; border: 3px solid red; border-radius: 50%; color: red; font-weight: 900; font-size: 16px; line-height: 48px; text-align: center; z-index: 10; background: transparent; font-family: 'Malgun Gothic', sans-serif;">확인</div></span></div><br><br><h2 style="text-align: center; margin-top: 20px; color: black; font-size: 22px; letter-spacing: 2px;">하이에어공조(주) 귀하</h2><p style="text-align: right; margin-top: 30px; padding-right: 10px; font-size: 11px; color: #888;">[시스템 로그] 신청일시: {doc.get('Apply_Time', '-') if doc.get('Apply_Time', '') else '-'} | 최종승인일시: {doc.get('Approve_Time', '-') if doc.get('Approve_Time', '') else '-'}</p></div>"""
         st.components.v1.html(f"<script>function printPDF() {{ var w = window.open('', '_blank', 'width=800,height=900'); w.document.write('<html><head><title>연차휴가신청서</title><style>body {{ margin: 0; padding: 20px; background: #fff; }}</style></head><body>' + {repr(html_template)} + '</body></html>'); w.document.close(); w.focus(); setTimeout(function() {{ w.print(); w.close(); }}, 250); }}</script><button onclick=\"printPDF()\" style=\"background-color: #FF4B4B; color: white; border: none; padding: 10px 20px; font-size: 15px; font-weight: bold; border-radius: 5px; cursor: pointer; margin-bottom: 20px; width: 100%;\">📥 연차신청서 PDF 다운로드 / 즉시 인쇄하기</button>", height=60)
         st.markdown(html_template, unsafe_allow_html=True)
 
@@ -601,7 +611,9 @@ elif choice == "✅ 팀원 결재 관리 (검토/승인)":
                         idx = df_plans[df_plans["ID"].astype(str) == str(t_id)].index[0]; e_id = df_plans.at[idx, "Emp_ID"]; v_type = str(df_plans.at[idx, "Type"])
                         if user_info['permission'] == "파트장": df_plans.at[idx, "Status"] = "검토완료"; df_plans.at[idx, "Part_Sign"] = str(user_info['이름'])
                         else:
-                            df_plans.at[idx, "Status"] = "승인"; df_plans.at[idx, "Manager_Sign"] = str(user_info['이름']); df_plans.at[idx, "Approve_Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            df_plans.at[idx, "Status"] = "승인"; df_plans.at[idx, "Manager_Sign"] = str(user_info['이름']); 
+                            # 🚀 KST 적용
+                            df_plans.at[idx, "Approve_Time"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                             val = 0.5 if "반차" in v_type else 1.0
                             if "연차계획" in v_type: df_emp.loc[df_emp["ID"].astype(str) == str(e_id), "연차계획"] += val
                             elif "휴가" not in v_type and "교육/훈련" not in v_type: df_emp.loc[df_emp["ID"].astype(str) == str(e_id), ["사용","연차잔액"]] += [val, -val]
@@ -610,7 +622,10 @@ elif choice == "✅ 팀원 결재 관리 (검토/승인)":
                     for t_id in s_ids:
                         idx = df_plans[df_plans["ID"].astype(str) == str(t_id)].index[0]; df_plans.at[idx, "Status"] = "반려"
                         if user_info['permission'] == "파트장": df_plans.at[idx, "Part_Sign"] = f"반려됨({user_info['이름']})"
-                        else: df_plans.at[idx, "Manager_Sign"] = f"반려됨({user_info['이름']})"; df_plans.at[idx, "Approve_Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        else: 
+                            df_plans.at[idx, "Manager_Sign"] = f"반려됨({user_info['이름']})"
+                            # 🚀 KST 적용
+                            df_plans.at[idx, "Approve_Time"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     if save_plans_only(df_plans, sel_year): st.rerun()
 
     with tab_history:
@@ -632,7 +647,8 @@ elif choice == "📅 연차 현황 달력":
     elif user_info['permission'] in ["팀원", "팀장"]: cal_p = cal_p[cal_p['팀'] == user_info['팀']]
     
     df_holidays = load_holidays()
-    t = datetime.now()
+    # 🚀 KST 적용
+    t = datetime.now(KST)
     c_y, c_m = st.columns(2)
     s_y = c_y.selectbox("연도", [t.year, t.year+1, t.year-1], index=0)
     s_m = c_m.selectbox("월", range(1, 13), index=t.month-1)
@@ -722,7 +738,6 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
         promo_status['발송일시'] = promo_status['발송일시'].fillna('-')
         promo_status['서명일시'] = promo_status['서명일시'].fillna('-')
         
-        # 🚀 용어 수정: 서명상태 -> 확인상태
         promo_view = promo_status[['팀', '직급', 'ID', '이름', '실잔여', '서명상태', '발송일시', '서명일시']].rename(columns={'ID':'사번', '실잔여':'미계획잔여일', '서명상태':'확인상태', '서명일시':'확인일시'})
         
         if not promo_view.empty:
@@ -739,7 +754,8 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                     with st.spinner("대상자를 스캔하고 메일을 발송 중입니다..."):
                         new_logs = df_logs.copy()
                         send_cnt = 0
-                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        # 🚀 KST 적용
+                        now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                         
                         target_emp = eligible_emp[eligible_emp['ID'].isin(selected_promo_ids)]
                         
@@ -747,7 +763,6 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                             emp_id = str(emp['ID'])
                             exist = new_logs[new_logs['Emp_ID'] == emp_id]
                             
-                            # 🚀 기존 '서명완료' 사용자도 호환되도록 처리
                             if exist.empty or exist.iloc[0]['서명상태'] not in ['확인완료', '서명완료']:
                                 email = str(emp.get('EMAIL', ''))
                                 if "@" in email:
@@ -778,7 +793,8 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
             n_title, n_content = st.text_input("제목"), st.text_area("내용")
             if st.form_submit_button("등록") and n_title:
                 new_n_id = int(pd.to_numeric(df_notices["ID"], errors='coerce').max() + 1) if not df_notices.empty else 1
-                if save_notices_only(pd.concat([df_notices, pd.DataFrame([{"ID": new_n_id, "날짜": datetime.now().strftime("%Y-%m-%d"), "제목": n_title, "내용": n_content}])], ignore_index=True)): st.rerun()
+                # 🚀 KST 적용
+                if save_notices_only(pd.concat([df_notices, pd.DataFrame([{"ID": new_n_id, "날짜": datetime.now(KST).strftime("%Y-%m-%d"), "제목": n_title, "내용": n_content}])], ignore_index=True)): st.rerun()
         valid_notices = df_notices[df_notices["제목"].str.strip() != ""]
         if not valid_notices.empty:
             edit_target = st.selectbox("수정/삭제", valid_notices["제목"].tolist())
@@ -791,7 +807,8 @@ elif choice == "🌐 [관리자] 전사 통합 관리":
                     save_notices_only(df_notices[df_notices["제목"] != edit_target]); st.rerun()
 
     with tab_mail:
-        today_date = datetime.now().date()
+        # 🚀 KST 적용
+        today_date = datetime.now(KST).date()
         preview_rows = [{"Plan_ID": str(row['ID']), "사번": row['Emp_ID'], "이름": df_emp[df_emp['ID'].astype(str)==str(row['Emp_ID'])].iloc[0]['이름'], "부서": df_emp[df_emp['ID'].astype(str)==str(row['Emp_ID'])].iloc[0]['팀'], "예정일자": row['Date'], "구분": row['Type'], "이메일": df_emp[df_emp['ID'].astype(str)==str(row['Emp_ID'])].iloc[0].get('EMAIL','')} for idx, row in df_plans.iterrows() if row['Status'] == '승인' and str(row.get('Reminder_Sent', '')) != 'Y' and row['Type'].strip() != "" and 1 <= (datetime.strptime(str(row['Date']).strip(), "%Y-%m-%d").date() - today_date).days <= 7 and not df_emp[df_emp['ID'].astype(str)==str(row['Emp_ID'])].empty]
         if preview_rows:
             preview_df = pd.DataFrame(preview_rows)
