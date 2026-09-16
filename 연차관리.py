@@ -28,7 +28,7 @@ SPREADSHEET_NAME = "vacation_test"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "haacact@gmail.com"
-SENDER_PASSWORD = st.secrets.get("email_password", "gjurrycgnypvyilk")
+SENDER_PASSWORD = st.secrets["email_password"]
 
 @st.cache_resource
 def get_gspread_client():
